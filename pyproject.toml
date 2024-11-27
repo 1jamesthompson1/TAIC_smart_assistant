@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "rag-chatbot"
+version = "0.1.0"
+description = ""
+authors = ["1jamesthompson1 <1jamesthompson1@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+gradio = "^5.6.0"
+python-dotenv = "^1.0.1"
+openai = "^1.55.1"
+lancedb = "^0.16.0"
+voyageai = "^0.3.1"
+adlfs = "^2024.7.0"
+
+[tool.poetry.scripts]
+chatbot = "app:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
