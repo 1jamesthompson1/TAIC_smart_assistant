@@ -46,29 +46,27 @@ class Chatbot:
         else:
             raise ValueError(f"type must be 'fts' or 'vector' not {type}")
 
+        print(f"Conducting search with query: {final_query if isinstance(final_query, str) else 'vector embeddings of ' + query}, and filters '{where_statement}'")
+
         results = (self.all_document_types_table
             .search(final_query, query_type=type)
             .where(where_statement, prefilter=True)
-            .to_pandas())
+            .to_pandas()).drop(columns=["vector"])
 
         return results
 
-    def process_input(self, input_text, history=[]):
-        history.append({
-            "role": "user",
-            "content": input_text
-        })
+    def process_input(self,history=[]):
+        system_message = {
+            "role": "system",
+            "content": """
+You are a helpful chatbot assistant working at the New Zealand transport accident investigation commision.
+You will be provided the conversation history and a query fro the user. You can either respond directly or can call a function that searches a database of all of TAICs accident investigation reports.
+"""}
 
-        messages = [
-            {"role": "system", "content": """
- You are a helpful chatbot assistant working at the New Zealand transport accident investigation commision.
- You will be provided the conversation history and a query fro the user. You can either respond directly or can call a function that searches a database of all of TAICs accident investigation reports.
- """},
-        ] + history
 
-        response = self.openai_client.chat.completions.create(
+        response_stream = self.openai_client.chat.completions.create(
             model="gpt-4o",
-            messages=messages,
+            messages=[system_message] + history,
             tools=[
                 {
                     "type": "function",
@@ -80,7 +78,7 @@ class Chatbot:
                             "properties": {
                                 "query": {
                                     "type": "string",
-                                    "description": "The query to search for. Left as None and it will return everything."
+                                    "description": "The query to search for. Leaving it as None will return all the results that match the filters."
                                 },
                                 "type": {
                                     "type": "string",
@@ -104,79 +102,152 @@ class Chatbot:
                                 }
                             },
                             "required": ["query", "type", "year_range", "document_type", "modes"],
-                            "additionalProperties": False
+                            "additionalProperties": False,
+                            "strict": True
                         }
+
+                    }
+                }
+            ],
+            stream=True
+        )   
+        function_arguments_str = ""
+        function_name = ""
+        tool_call_id = ""
+        is_collecting_function_args = False
+
+        history.append({
+            "role": "assistant",
+            "content": ""
+        })
+
+        for part in response_stream:
+            delta = part.choices[0].delta
+            finish_reason = part.choices[0].finish_reason
+
+            # Process assistant content
+            if delta.content:
+                print("Assistant:", delta.content)
+                history[-1]["content"] += delta.content
+                yield history
+
+            if delta.tool_calls:
+                is_collecting_function_args = True
+                tool_call = delta.tool_calls[0]
+
+                if tool_call.id:
+                    tool_call_id = tool_call.id
+                if tool_call.function.name:
+                    function_name = tool_call.function.name
+                
+                # Process function arguments delta
+                if tool_call.function.arguments:
+                    function_arguments_str += tool_call.function.arguments
+
+            # Process tool call with complete arguments
+            if finish_reason == "tool_calls" and is_collecting_function_args:
+                break
+
+
+        if not is_collecting_function_args:
+            return history
+
+        function_arguments = json.loads(function_arguments_str)
+
+        history[-1]["metadata"] = {"title": f"🔍 Searching database for more information" }
+        history[-1]["content"] += f"Using these parameters to search the database: {function_arguments_str}"
+        yield history
+
+        results = self.knowledge_search(function_arguments["query"], function_arguments["type"], function_arguments["year_range"], function_arguments["document_type"], function_arguments["modes"])
+
+        tool_call_message = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": function_name,
+                        "arguments": function_arguments_str
                     }
                 }
             ]
-        )   
+        }
 
-        response_message = response.choices[0].message
-
-        if response_message.content:
-            history.append({
-                "role": "assistant",
-                "content": response_message.content
-            })
-            return "", history, None
-
-        tool_call = response_message.tool_calls[0]
-        arguments = json.loads(tool_call.function.arguments)
-
-        results = self.knowledge_search(arguments["query"], arguments["type"], arguments["year_range"], arguments["document_type"], arguments["modes"])
-
-        messages = history + [
-            response_message,
+        messages = [system_message] + history + [tool_call_message] + [
             {
                 "role": "tool",
                 "content": results.to_json(orient="records"),
-                "tool_call_id": tool_call.id
+                "tool_call_id": tool_call_id
             },
         ]
+
+        history.append({
+            "role": "assistant",
+            "content": "testing",
+            "metadata": {"title": f"📖 Reading {results.shape[0]} results"}
+        })
+        yield history
 
         rag_response = self.openai_client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
+            stream=True
         )
 
         history.append({
             "role": "assistant",
-            "content": rag_response.choices[0].message.content
+            "content": ""
         })
 
-        return "", history, results
+        for part in rag_response:
+            delta = part.choices[0].delta
+            finish_reason = part.choices[0].finish_reason
+
+            # Process assistant content
+            if delta.content:
+                history[-1]["content"] += delta.content
+                yield history
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Launch the RAG Chatbot app.")
-    parser.add_argument('--debug', action='store_true', help='Run the app in debug mode')
-    parser.add_argument('--share', action='store_true', help='Share the app on a public URL')
-    args = parser.parse_args()
+        return history
 
-    chatbot_instance = Chatbot(
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
-        db_uri=os.getenv("db_URI")
+
+def handle_submit(user_input, history=None):
+    if history is None:
+        history = []
+    history.append({"role": "user", "content": user_input})
+    return "", history
+
+
+parser = argparse.ArgumentParser(description="Launch the RAG Chatbot app.")
+parser.add_argument('--debug', action='store_true', help='Run the app in debug mode')
+parser.add_argument('--share', action='store_true', help='Share the app on a public URL')
+args = parser.parse_args()
+
+chatbot_instance = Chatbot(
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
+    voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
+    db_uri=os.getenv("db_URI")
+)
+
+with gr.Blocks(
+    title="TAIC smart assistant",
+    theme=gr.themes.Base(),
+    fill_height=True
+) as demo:
+    gr.Markdown("# TAIC smart assistant")
+    chatbot_interface = gr.Chatbot(
+        type="messages",
+        height="90%",
+        min_height=400,
     )
 
-    with gr.Blocks(
-        title="TAIC smart assistant",
-        theme=gr.themes.Base(),
-        fill_height=True
-    ) as demo:
-        gr.Markdown("# TAIC smart assistant")
-        chatbot_interface = gr.Chatbot(
-            type="messages",
-            height="90%",
-            min_height=300,
-            layout="bubble",
-        )
-        input_text = gr.Textbox(placeholder="Type your message here...", show_label=False)
-        results_table = gr.DataFrame(interactive=False)
+    input_text = gr.Textbox(placeholder="Type your message here...", show_label=False)
 
-        input_text.submit(fn=chatbot_instance.process_input, inputs=[input_text, chatbot_interface], outputs=[input_text, chatbot_interface, results_table])
+    input_text.submit(fn=handle_submit, inputs=[input_text, chatbot_interface], outputs=[input_text, chatbot_interface], queue=False).then(
+        chatbot_instance.process_input, inputs=[chatbot_interface], outputs=[chatbot_interface]
+    )
 
-    demo.launch(debug=args.debug, share=args.share)
-
-if __name__ == "__main__":
-    main()
+    demo.launch(share=args.share)
