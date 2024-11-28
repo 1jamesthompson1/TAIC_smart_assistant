@@ -6,7 +6,7 @@ import dotenv
 import os
 import json
 import argparse
-
+from datetime import datetime
 dotenv.load_dotenv()
 
 class Chatbot:
@@ -22,6 +22,7 @@ class Chatbot:
         ).embeddings[0]
 
     def knowledge_search(self, query: str, type: str, year_range: tuple[int, int], document_type: list[str], modes: list[int]):
+        limit = 100
         where_statement = []
         if year_range:
             where_statement.append(f"year >= {year_range[0]} and year <= {year_range[1]}")
@@ -41,6 +42,7 @@ class Chatbot:
             final_query = None
         elif type == "fts":
             final_query = query
+            limit = 1000
         elif type == "vector":
             final_query = self.embed_query(query)
         else:
@@ -51,6 +53,7 @@ class Chatbot:
         results = (self.all_document_types_table
             .search(final_query, query_type=type)
             .where(where_statement, prefilter=True)
+            .limit(limit)
             .to_pandas()).drop(columns=["vector"])
 
         return results
@@ -58,9 +61,10 @@ class Chatbot:
     def process_input(self,history=[]):
         system_message = {
             "role": "system",
-            "content": """
-You are a helpful chatbot assistant working at the New Zealand transport accident investigation commision.
-You will be provided the conversation history and a query fro the user. You can either respond directly or can call a function that searches a database of all of TAICs accident investigation reports.
+            "content": f"""
+You are a expert working at the New Zealand transport accident investigation commision. Your job is to assistant users with their queries. The day is {datetime.now()}.
+You will be provided the conversation history and a query from the user. You can either respond directly or can call a function that searches a database of all of TAICs accident investigation reports.
+When talking about reports it is important to use the document ID and report IDs to provide references.
 """}
 
 
@@ -72,18 +76,41 @@ You will be provided the conversation history and a query fro the user. You can 
                     "type": "function",
                     "function": {
                         "name": "search",
-                        "description": "Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission.",
+                        "description":
+"""Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission. This function searches a vector database.
+Eample function calls:
+```json
+{
+    "query": "What are common elements in floatation devices and fires?",
+    "type": "vector",
+    "year_range": [2020, 2023],
+    "document_type": ["safety_issue", "recommendation"],
+    "modes": [0, 1, 2]
+}
+```
+
+```json
+{
+    "query": "",
+    "type": "vector",
+    "year_range": [2020, 2023],
+    "document_type": ["safety_issue"],
+    "modes": [2]
+}
+```
+
+""",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "query": {
                                     "type": "string",
-                                    "description": "The query to search for. Leaving it as None will return all the results that match the filters."
+                                    "description": "The query to search for. If left as an empty string it will return all results that match the other paramters."
                                 },
                                 "type": {
                                     "type": "string",
                                     "enum": ["fts", "vector"],
-                                    "description": "The type of search to perform."
+                                    "description": "The type of search to perform. fts should be used if the query is asking a specific question about a organisation, organisation etc. Otherwsie for more general information use vector, it will embed your query and search the vector database."
                                 },
                                 "year_range": {
                                     "type": "array",
@@ -127,7 +154,6 @@ You will be provided the conversation history and a query fro the user. You can 
 
             # Process assistant content
             if delta.content:
-                print("Assistant:", delta.content)
                 history[-1]["content"] += delta.content
                 yield history
 
@@ -183,9 +209,11 @@ You will be provided the conversation history and a query fro the user. You can 
             },
         ]
 
+        html_table = f"<style>table {{ width: 100%; }}</style>{results.to_html(index=False)}"
+
         history.append({
             "role": "assistant",
-            "content": "testing",
+            "content": html_table,
             "metadata": {"title": f"📖 Reading {results.shape[0]} results"}
         })
         yield history
@@ -235,7 +263,8 @@ chatbot_instance = Chatbot(
 with gr.Blocks(
     title="TAIC smart assistant",
     theme=gr.themes.Base(),
-    fill_height=True
+    fill_height=True,
+    fill_width=True
 ) as demo:
     gr.Markdown("# TAIC smart assistant")
     chatbot_interface = gr.Chatbot(
