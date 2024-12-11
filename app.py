@@ -21,7 +21,7 @@ class Chatbot:
             query, model="voyage-large-2-instruct", input_type="query", truncation=False
         ).embeddings[0]
 
-    def knowledge_search(self, query: str, type: str, year_range: tuple[int, int], document_type: list[str], modes: list[int]):
+    def knowledge_search(self, query: str, type: str, year_range: tuple[int, int], document_type: list[str], modes: list[int], agencies: list[str]):
         limit = 100
         where_statement = []
         if year_range:
