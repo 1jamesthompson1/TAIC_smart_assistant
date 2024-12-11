@@ -60,7 +60,6 @@ class Chatbot:
             final_query = None
         elif type == "fts":
             final_query = query
-            limit = 1000
         elif type == "vector":
             final_query = self.embed_query(query)
         else:
@@ -272,6 +271,8 @@ Eample function calls:
 
         return history
 
+    def handle_undo(self, history, undo_data: gr.UndoData):
+        return history[:undo_data.index], history[undo_data.index]['content']
 
 def handle_submit(user_input, history=None):
     if history is None:
@@ -302,9 +303,17 @@ with gr.Blocks(
         type="messages",
         height="90%",
         min_height=400,
+        avatar_images=(None, "https://www.taic.org.nz/themes/custom/taic/favicon/android-icon-192x192.png")
     )
 
     input_text = gr.Textbox(placeholder="Type your message here...", show_label=False)
+
+    chatbot_interface.undo(
+        fn=chatbot_instance.handle_undo,
+        inputs=chatbot_interface,
+        outputs=[chatbot_interface, input_text],
+    )
+
 
     input_text.submit(fn=handle_submit, inputs=[input_text, chatbot_interface], outputs=[input_text, chatbot_interface], queue=False).then(
         chatbot_instance.process_input, inputs=[chatbot_interface], outputs=[chatbot_interface]
