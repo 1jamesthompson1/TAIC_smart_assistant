@@ -7,21 +7,37 @@ import os
 import json
 import argparse
 from datetime import datetime
-dotenv.load_dotenv()
+from rich import print, table
+dotenv.load_dotenv(override=True)
 
 class Chatbot:
     def __init__(self, openai_api_key, voyageai_api_key, db_uri):
         self.vector_db = lancedb.connect(db_uri)
-        self.all_document_types_table = self.vector_db.open_table("all_document_types")
+        table_name = "all_document_types"
+        self.all_document_types_table = self.vector_db.open_table(table_name)
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
         self.voyageai_client = voyageai.Client(api_key=voyageai_api_key)
+
+        print(f"[bold]Created Chatbot[/bold]")
+        chatbot_config = table.Table(title="🛠️  Chatbot Configuration 🛠️")
+
+        chatbot_config.add_column("Name")
+        chatbot_config.add_column("Value")
+        chatbot_config.add_row("Database URI", db_uri)
+        chatbot_config.add_row("Table Name", table_name)
+        chatbot_config.add_row("Table Size", f"{self.all_document_types_table.count_rows()} rows")
+        chatbot_config.add_row("Columns", ", ".join(self.all_document_types_table.schema.names))
+        print(chatbot_config)
+
+        if "agency" not in self.all_document_types_table.schema.names:
+            raise ValueError("agency column not found in table")
 
     def embed_query(self, query: str):
         return self.voyageai_client.embed(
             query, model="voyage-large-2-instruct", input_type="query", truncation=False
         ).embeddings[0]
 
-    def knowledge_search(self, query: str, type: str, year_range: tuple[int, int], document_type: list[str], modes: list[int], agencies: list[str]):
+    def knowledge_search(self, query: str, type: str, year_range: tuple[int, int], document_type: list[str], modes: list[str], agencies: list[str]):
         limit = 100
         where_statement = []
         if year_range:
@@ -32,12 +48,14 @@ class Chatbot:
         if modes and len(modes) > 1:
             where_statement.append(f"mode in {tuple(modes)}")
         elif modes and len(modes) == 1:
-            where_statement.append(f"mode = {modes[0]}")
-
+            where_statement.append(f"mode = '{modes[0]}'")
+        if agencies and len(agencies) > 1:
+            where_statement.append(f"agency in {tuple(agencies)}")
+        elif agencies and len(agencies) == 1:
+            where_statement.append(f"agency = '{agencies[0]}'")
 
         where_statement = ' AND '.join(where_statement)
 
-        print(where_statement)
         if query == "" or query is None:
             final_query = None
         elif type == "fts":
@@ -47,8 +65,14 @@ class Chatbot:
             final_query = self.embed_query(query)
         else:
             raise ValueError(f"type must be 'fts' or 'vector' not {type}")
-
-        print(f"Conducting search with query: {final_query if isinstance(final_query, str) else 'vector embeddings of ' + query}, and filters '{where_statement}'")
+        
+        query_table = table.Table(title="🔍 Conducting search with 🔍", show_header=True, title_style="bold blue")
+        query_table.add_column("Parameter")
+        query_table.add_column("Value")
+        query_table.add_row("Query", final_query if isinstance(final_query, str) else 'vector embeddings of ' + query)
+        if where_statement:
+            query_table.add_row("Filters", where_statement)
+        print(query_table)
 
         results = (self.all_document_types_table
             .search(final_query, query_type=type)
@@ -85,7 +109,8 @@ Eample function calls:
     "type": "vector",
     "year_range": [2020, 2023],
     "document_type": ["safety_issue", "recommendation"],
-    "modes": [0, 1, 2]
+    "modes": [0, 1, 2],
+    "agencies": ["TSB", "ATSB", "TAIC"]
 }
 ```
 
@@ -95,7 +120,8 @@ Eample function calls:
     "type": "vector",
     "year_range": [2020, 2023],
     "document_type": ["safety_issue"],
-    "modes": [2]
+    "modes": [2],
+    "agencies": ["TAIC"]
 }
 ```
 
@@ -125,10 +151,15 @@ Eample function calls:
                                 "modes": {
                                     "type": "array",
                                     "description": "A list of modes to filter the search results. Valid modes are 0, 1, and 2. Which are aviation, rail, and marine respectively.",
-                                    "items": {"type": "number"}
+                                    "items": {"type": "string"}
+                                },
+                                "agencies": {
+                                    "type": "array",
+                                    "description": "A list of agencies to filter the search results. Valid agencies are TSB, ATSB, and TAIC. Which are aviation, rail, and marine respectively.",
+                                    "items": {"type": "string"}
                                 }
                             },
-                            "required": ["query", "type", "year_range", "document_type", "modes"],
+                            "required": ["query", "type", "year_range", "document_type", "modes", "agencies"],
                             "additionalProperties": False,
                             "strict": True
                         }
@@ -184,8 +215,8 @@ Eample function calls:
         history[-1]["content"] += f"Using these parameters to search the database: {function_arguments_str}"
         yield history
 
-        results = self.knowledge_search(function_arguments["query"], function_arguments["type"], function_arguments["year_range"], function_arguments["document_type"], function_arguments["modes"])
-
+        print(function_arguments["agencies"])
+        results = self.knowledge_search(**function_arguments)
         tool_call_message = {
             "role": "assistant",
             "content": None,
@@ -209,7 +240,7 @@ Eample function calls:
             },
         ]
 
-        html_table = f"<style>table {{ width: 100%; }}</style>{results.to_html(index=False)}"
+        html_table = f"<style>table {{ width: 100%; font-size: 16px; }} th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }} th {{ background-color: #f2f2f2; }} </style>{results.to_html(index=False)}"
 
         history.append({
             "role": "assistant",
