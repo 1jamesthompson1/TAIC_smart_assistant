@@ -97,7 +97,7 @@ def handle_submit(user_input, history=None):
 chatbot_instance = assistant.assistant(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
-    db_uri=os.getenv("db_URI")
+    db_uri=os.getenv("VECTORDB_PATH")
 )
 
 def get_welcome_message(request: gr.Request):
