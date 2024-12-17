@@ -52,11 +52,11 @@ def get_user(request: Request):
     user = request.session.get('user')
     if user:
         return user['name']
-    return RedirectResponse(url='/login-page')
+    return None
 
 @app.get('/')
 def public(user: dict = Depends(get_user)):
-    if isinstance(user, str):
+    if user:
         return RedirectResponse(url='/assistant')
     else:
         return RedirectResponse(url='/login-page')
@@ -138,7 +138,7 @@ with gr.Blocks(
         chatbot_instance.process_input, inputs=[chatbot_interface], outputs=[chatbot_interface]
     )
 
-app = gr.mount_gradio_app(app, assistant_page, path="/assistant", auth_dependency=get_user, show_api=False)
+app = gr.mount_gradio_app(app, assistant_page, path="/assistant", auth_dependency=get_user ,show_api=False)
 
 
 with gr.Blocks() as login_page:
