@@ -1,3 +1,7 @@
+---
+title: TAIC smart assistant
+app_file: app.py
+---
 This is a quick chatbot gradio app. 
 
 It is being built seperately from the main project repo: https://github.com/1jamesthompson1/TAIC-report-summary to keep oveheads low.
