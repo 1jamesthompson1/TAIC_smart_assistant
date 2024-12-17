@@ -1,6 +1,8 @@
 ---
 title: TAIC smart assistant
 app_file: app.py
+sdk: docker
+app_port: 8000
 ---
 This is a quick chatbot gradio app. 
 
