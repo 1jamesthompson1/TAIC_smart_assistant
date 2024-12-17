@@ -1,6 +1,8 @@
 ---
 title: TAIC smart assistant
-app_file: app.py
+emoji: 💻
+colorFrom: purple
+colorTo: gray
 sdk: docker
 app_port: 8000
 ---
