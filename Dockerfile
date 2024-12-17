@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir poetry
 RUN poetry config virtualenvs.create false && poetry install --no-dev
 
 # Expose the port that the app runs on
-EXPOSE 8000
+EXPOSE 7860
 
 # Command to run the application
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
