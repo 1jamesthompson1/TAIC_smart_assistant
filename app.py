@@ -68,7 +68,11 @@ async def logout(request: Request):
 
 @app.route('/login')
 async def login(request: Request):
-    redirect_uri = request.url_for('auth')
+    # Forcing deployed url to use https. This is because it seems to default to using http.
+    if "localhost" not in request.url.hostname and "https" not in request.url.scheme:
+        redirect_uri = 'https://' + request.url.hostname + request.url_for('auth').path
+    else:
+        redirect_uri = request.url_for('auth')
     return await oauth.azure.authorize_redirect(request, redirect_uri)
 
 @app.route('/auth')
