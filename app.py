@@ -41,7 +41,7 @@ oauth.register(
     access_token_url=f'https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/token',
     access_token_params=None,
     refresh_token_url=None,
-    redirect_uri='http://localhost:8000/auth',
+    redirect_uri='/auth',
     client_kwargs={'scope': 'openid profile email'},
 )
 
@@ -81,7 +81,7 @@ async def auth(request: Request):
     request.session['user'] = user
     return RedirectResponse(url='/')
 
-def handle_undo(self, history, undo_data: gr.UndoData):
+def handle_undo(history, undo_data: gr.UndoData):
     return history[:undo_data.index], history[undo_data.index]['content']
 
 def handle_submit(user_input, history=None):
@@ -135,6 +135,7 @@ with gr.Blocks(
     )
 
 app = gr.mount_gradio_app(app, assistant_page, path="/assistant", auth_dependency=get_user, show_api=False)
+
 
 with gr.Blocks() as login_page:
     gr.Button("Login", link="/login")
