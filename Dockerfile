@@ -27,7 +27,7 @@ RUN curl -sSL -O https://packages.microsoft.com/config/debian/11/packages-micros
 
 # Install azcopy
 RUN apt-get install -y azcopy
-ARG SAS_TOKEN
+
 # Download the vector database
 RUN --mount=type=secret,id=SAS_TOKEN,mode=0444,required=true \
     azcopy cp "https://taicdocumentsearcherdata.blob.core.windows.net/vectordb/prod/*?$(cat /run/secrets/SAS_TOKEN)" vectordb --recursive
