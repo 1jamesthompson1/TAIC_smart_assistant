@@ -58,7 +58,7 @@ class assistant:
             document_types = ", ".join(f'"{dt}"' for dt in document_type)
             where_statement.append(f"document_type in ({document_types})")
         if modes and len(modes) > 1:
-            where_statement.append(f"mode in {tuple(modes)}")
+            where_statement.append(f"mode in {tuple([str(mode) for mode in modes])}")
         elif modes and len(modes) == 1:
             where_statement.append(f"mode = '{modes[0]}'")
         if agencies and len(agencies) > 1:
