@@ -23,6 +23,10 @@ azure-data-tables = "^12.6.0"
 [tool.poetry.scripts]
 chatbot = "app:main"
 
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+huggingface-hub = {extras = ["cli"], version = "^0.27.0"}
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
