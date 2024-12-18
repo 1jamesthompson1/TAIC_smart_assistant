@@ -30,7 +30,7 @@ RUN apt-get install -y azcopy
 ARG SAS_TOKEN
 # Download the vector database
 RUN --mount=type=secret,id=SAS_TOKEN,mode=0444,required=true \
-    azcopy cp "https://taicdocumentsearcherdata.blob.core.windows.net/vectordb/prod/*?$SAS_TOKEN" vectordb --recursive
+    azcopy cp "https://taicdocumentsearcherdata.blob.core.windows.net/vectordb/prod/*?$(cat /run/secrets/SAS_TOKEN)" vectordb --recursive
 
 # Expose the port that the app runs on
 EXPOSE 7860
