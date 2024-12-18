@@ -1,3 +1,4 @@
+from re import M
 import uuid
 from fastapi import FastAPI, Request, Depends
 from starlette.config import Config
@@ -101,6 +102,19 @@ def handle_submit(user_input, history=None):
     return "", history
 
 def create_or_update_conversation(request: gr.Request, conversation_id, history):
+    if history == []: # ignore instance when history is empty
+        return
+    # Split messages into chunks of no more than 60kb
+    history_json = json.dumps(history)
+    MAX_LEN = 30000
+    history_chunks = []
+    while len(history_json) > MAX_LEN:
+        history_chunks.append(history_json[:MAX_LEN])
+        history_json = history_json[MAX_LEN:]
+    history_chunks.append(history_json)
+
+    messages = {f"messages_{index}": history_chunk for index, history_chunk in enumerate(history_chunks)}
+
     username = request.username
     previous_logs = list(chatlogs.query_entities(f"PartitionKey eq '{username}' and RowKey eq '{conversation_id}'"))
     if len(previous_logs) == 1:
@@ -109,23 +123,21 @@ def create_or_update_conversation(request: gr.Request, conversation_id, history)
             row_key=conversation_id
         )
         chatlogs.update_entity(
-            entity={
+            entity={**{
                 "PartitionKey": username,
                 "RowKey": conversation_id,
                 "conversation_title": previous_entity.get("conversation_title"),
-                "messages": json.dumps(history),
                 "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
+            }, **messages},
         )
     elif len(previous_logs) == 0:
         chatlogs.create_entity(
-            entity={
+            entity={**messages, **{
                 "PartitionKey": username,
                 "RowKey": conversation_id,
                 "conversation_title": assistant_instance.provide_conversation_title(history),
-                "messages": json.dumps(history),
                 "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
+            }}
         )
     else:
         raise ValueError(f"More than one conversation found, found {len(previous_logs)}")
@@ -139,15 +151,23 @@ def get_user_conversations(request: gr.Request):
     previous_conversations = list()
 
     for conversation in converstations:
+        all_messages = [conversation[message_key] for message_key in conversation.keys() if message_key.startswith("messages")]
+        messages = json.loads("".join(all_messages))
+
         previous_conversations.append({
             "conversation_title": conversation.get("conversation_title"),
-            "messages": json.loads(conversation.get("messages")),
-            "id": conversation.get("RowKey")
+            "messages": messages,
+            "id": conversation.get("RowKey"),
+            "last_updated": conversation.get("last_updated")
         })
+
+    # Sort by last updated
+    previous_conversations = sorted(previous_conversations, key=lambda x: datetime.strptime(x["last_updated"], "%Y-%m-%d %H:%M:%S"), reverse=True)
 
     print(f'[bold]Found {len(previous_conversations)} user conversations[/bold]')
     print(previous_conversations)
     return previous_conversations         
+    
 assistant_instance = assistant.assistant(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
