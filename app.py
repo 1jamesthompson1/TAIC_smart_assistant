@@ -1,6 +1,5 @@
-import re
+import uuid
 from fastapi import FastAPI, Request, Depends
-from numpy import isin
 from starlette.config import Config
 from starlette.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -9,13 +8,19 @@ import gradio as gr
 import dotenv
 import os
 import uvicorn
-from rich import print, table
+from rich import print
 import logging
-
-logging.basicConfig(level=logging.INFO)
+from azure.data.tables import TableServiceClient
+import json
+from datetime import datetime
 
 import assistant
+logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv(override=True)
+
+connection_string = f"AccountName={os.getenv('AZURE_STORAGE_ACCOUNT_NAME')};AccountKey={os.getenv('AZURE_STORAGE_ACCOUNT_KEY')};EndpointSuffix=core.windows.net"
+client = TableServiceClient.from_connection_string(conn_str=connection_string)
+chatlogs = client.create_table_if_not_exists(table_name="chatlogs")
 
 app = FastAPI()
 
@@ -92,16 +97,65 @@ def handle_submit(user_input, history=None):
     if history is None:
         history = []
     history.append({"role": "user", "content": user_input})
+
     return "", history
 
-chatbot_instance = assistant.assistant(
+def create_or_update_conversation(request: gr.Request, conversation_id, history):
+    username = request.username
+    previous_logs = list(chatlogs.query_entities(f"PartitionKey eq '{username}' and RowKey eq '{conversation_id}'"))
+    if len(previous_logs) == 1:
+        previous_entity = chatlogs.get_entity(
+            partition_key=username,
+            row_key=conversation_id
+        )
+        chatlogs.update_entity(
+            entity={
+                "PartitionKey": username,
+                "RowKey": conversation_id,
+                "conversation_title": previous_entity.get("conversation_title"),
+                "messages": json.dumps(history),
+                "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        )
+    elif len(previous_logs) == 0:
+        chatlogs.create_entity(
+            entity={
+                "PartitionKey": username,
+                "RowKey": conversation_id,
+                "conversation_title": assistant_instance.provide_conversation_title(history),
+                "messages": json.dumps(history),
+                "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        )
+    else:
+        raise ValueError(f"More than one conversation found, found {len(previous_logs)}")
+
+def get_user_conversations(request: gr.Request):
+
+    converstations = chatlogs.query_entities(
+        query_filter=f"PartitionKey eq '{request.username}'"
+    )
+
+    previous_conversations = list()
+
+    for conversation in converstations:
+        previous_conversations.append({
+            "conversation_title": conversation.get("conversation_title"),
+            "messages": json.loads(conversation.get("messages")),
+            "id": conversation.get("RowKey")
+        })
+
+    print(f'[bold]Found {len(previous_conversations)} user conversations[/bold]')
+    print(previous_conversations)
+    return previous_conversations         
+assistant_instance = assistant.assistant(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
     db_uri=os.getenv("VECTORDB_PATH")
 )
 
 def get_welcome_message(request: gr.Request):
-    return "Logged in as: {}".format(request.username)
+    return request.username
 
 with gr.Blocks(
     title="TAIC smart assistant",
@@ -109,34 +163,83 @@ with gr.Blocks(
     fill_height=True,
     fill_width=True
 ) as assistant_page:
+    user_conversations = gr.State([])
+
+    assistant_page.load(
+        get_user_conversations,
+        inputs=None,
+        outputs=user_conversations
+    )
 
     with gr.Row():
         gr.Markdown("# TAIC smart assistant demo")
-        username = gr.Markdown('Logged in as: ')
-        gr.Button("Logout", link="/logout")
+        gr.Markdown('Logged in as:')
+        username = gr.Markdown()
+        logout_button = gr.Button("Logout", link="/logout")
 
-        assistant_page.load(
-            get_welcome_message, None, username
-        )
-
-    chatbot_interface = gr.Chatbot(
-        type="messages",
-        height="90%",
-        min_height=400,
-        avatar_images=(None, "https://www.taic.org.nz/themes/custom/taic/favicon/android-icon-192x192.png")
+    # Redirecto login page if not logged in
+    assistant_page.load(
+        get_welcome_message,
+        inputs=[], 
+        outputs=[username]
     )
 
-    input_text = gr.Textbox(placeholder="Type your message here...", show_label=False)
+    with gr.Row():
+        with gr.Column(scale=1):
+            gr.Markdown('### Current conversation')
+            conversation_id = gr.Markdown(str(uuid.uuid4()))
+            gr.Markdown('### Previous conversations')
+            @gr.render(inputs=[user_conversations])
+            def render_conversations(conversations):
+                for conversation in conversations:
+                    with gr.Row():
+                        gr.Markdown(f"### {conversation['conversation_title']}", container=False)
+                        def load_conversation(conversation=conversation):
+                            return conversation['messages'], conversation['id']
+                        gr.Button("load").click(
+                            fn=load_conversation,
+                            inputs=None,
+                            outputs=[chatbot_interface, conversation_id]
+                        )
+
+        with gr.Column(scale=3):
+            with gr.Row():
+                gr.Markdown('### Chat: ')
+
+            chatbot_interface = gr.Chatbot(
+                type="messages",
+                height="90%",
+                min_height=400,
+                avatar_images=(None, "https://www.taic.org.nz/themes/custom/taic/favicon/android-icon-192x192.png")
+            )
+
+            input_text = gr.Textbox(placeholder="Type your message here...", show_label=False)
 
     chatbot_interface.undo(
         fn=handle_undo,
         inputs=chatbot_interface,
         outputs=[chatbot_interface, input_text],
     )
+    chatbot_interface.clear(
+        lambda: (str(uuid.uuid4()), []),
+        None,
+        [conversation_id, chatbot_interface],
+        queue=False
+    )
+
+    chatbot_interface.change(
+        create_or_update_conversation,
+        inputs=[conversation_id, chatbot_interface],
+        outputs=None
+    )
 
     input_text.submit(fn=handle_submit, inputs=[input_text, chatbot_interface], outputs=[input_text, chatbot_interface], queue=False).then(
-        chatbot_instance.process_input, inputs=[chatbot_interface], outputs=[chatbot_interface]
+        assistant_instance.process_input, inputs=[chatbot_interface], outputs=[chatbot_interface]
     )
+    
+
+    
+
 
 app = gr.mount_gradio_app(app, assistant_page, path="/assistant", auth_dependency=get_user ,show_api=False)
 
