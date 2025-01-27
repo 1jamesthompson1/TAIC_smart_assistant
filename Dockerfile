@@ -11,7 +11,7 @@ COPY . .
 RUN pip install --no-cache-dir poetry
 
 # Install the dependencies using Poetry
-RUN poetry config virtualenvs.create false && poetry install --no-dev
+RUN poetry config virtualenvs.create false && poetry install --without dev
 
 # Install necessary packages to allow download of azcopy
 RUN apt-get update && apt-get install -y \
