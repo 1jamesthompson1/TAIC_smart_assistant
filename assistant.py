@@ -114,7 +114,7 @@ class assistant:
                     {
                         "role": "system",
                         "content": """
-                    You are part of a chatbot that help users add titles to their conversation. You will recieve the conversation and you are too response with no more than 5 works summary of the conversation.
+                    You are part of a chatbot assistant at the Transport Accident Investigation Commission that help users add titles to their conversation. You will receive the conversation and you are too response with a 5 word summary of the conversation.
                     Just respond with the title and nothing else.
                     """,
                     },
@@ -167,28 +167,28 @@ issues.
                     "type": "function",
                     "function": {
                         "name": "search",
-                        "description": """Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission. This function searches a vector database.
-Eample function calls:
+                        "description": f"""Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission. This function searches a vector database.
+Example function calls:
 ```json
-{
+{{
     "query": "What are common elements in floatation devices and fires?",
     "type": "vector",
-    "year_range": [2020, 2023],
+    "year_range": [2020, {datetime.now().year}],
     "document_type": ["safety_issue", "recommendation"],
     "modes": [0, 1, 2],
     "agencies": ["TSB", "ATSB", "TAIC"]
-}
+}}
 ```
 
 ```json
-{
+{{
     "query": "",
     "type": "vector",
-    "year_range": [2020, 2023],
+    "year_range": [2020, {datetime.now().year}],
     "document_type": ["safety_issue"],
     "modes": [2],
     "agencies": ["TAIC"]
-}
+}}
 ```
 
 """,
@@ -206,7 +206,7 @@ Eample function calls:
                                 },
                                 "year_range": {
                                     "type": "array",
-                                    "description": "An array specifying the start and end years for filtering results. Valid range is 2000-2023.",
+                                    "description": f"An array specifying the start and end years for filtering results. Valid range is 2000-{datetime.now().year}.",
                                     "items": {"type": "number"},
                                 },
                                 "document_type": {

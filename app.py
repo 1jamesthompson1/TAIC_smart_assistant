@@ -1,6 +1,7 @@
 import uuid
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
 from starlette.config import Config
+from starlette.status import HTTP_302_FOUND
 from starlette.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -59,7 +60,7 @@ def get_user(request: Request):
     user = request.session.get("user")
     if user:
         return user["name"]
-    return None
+    raise HTTPException(status_code=HTTP_302_FOUND, detail="Not authenticated", headers={"Location": "/login-page"})
 
 
 @app.get("/")
@@ -180,7 +181,12 @@ def get_user_conversations(request: gr.Request):
             for message_key in conversation.keys()
             if message_key.startswith("messages")
         ]
-        messages = json.loads("".join(all_messages))
+        
+        try:
+            messages = json.loads("".join(all_messages))
+        except json.JSONDecodeError:
+            print(f"Failed to decode messages for conversation {conversation}")
+            continue
 
         previous_conversations.append(
             {
@@ -254,7 +260,7 @@ with gr.Blocks(
                             inputs=None,
                             outputs=[chatbot_interface, conversation_id],
                         )
-
+                        
         with gr.Column(scale=3):
             with gr.Row():
                 gr.Markdown("### Chat: ")
@@ -286,6 +292,10 @@ with gr.Blocks(
         None,
         [conversation_id, chatbot_interface],
         queue=False,
+    ).then(
+        get_user_conversations,
+        inputs=None,
+        outputs=user_conversations,
     )
 
     input_text.submit(
@@ -301,6 +311,10 @@ with gr.Blocks(
         create_or_update_conversation,
         inputs=[conversation_id, chatbot_interface],
         outputs=None,
+    ).then(
+        get_user_conversations,
+        inputs=None,
+        outputs=user_conversations,
     ).then(
         lambda: gr.Textbox(interactive=True),
         None,
