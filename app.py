@@ -15,7 +15,7 @@ from azure.data.tables import TableServiceClient
 import json
 from datetime import datetime
 
-import assistant
+from backend import Assistant, Searching
 
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv(override=True)
@@ -185,7 +185,7 @@ def get_user_conversations(request: gr.Request):
         try:
             messages = json.loads("".join(all_messages))
         except json.JSONDecodeError:
-            print(f"Failed to decode messages for conversation {conversation}")
+            print(f"Failed to decode messages for conversation {conversation["PartitionKey"]} and {conversation["RowKey"]}")
             continue
 
         previous_conversations.append(
@@ -208,10 +208,15 @@ def get_user_conversations(request: gr.Request):
     return previous_conversations
 
 
-assistant_instance = assistant.assistant(
+searching_instance = Searching.Searcher(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
     db_uri=os.getenv("VECTORDB_PATH"),
+)
+
+assistant_instance = Assistant.Assistant(
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
+    searcher=searching_instance,
 )
 
 
