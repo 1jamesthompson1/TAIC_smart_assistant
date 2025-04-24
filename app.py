@@ -61,7 +61,11 @@ def get_user(request: Request):
     user = request.session.get("user")
     if user:
         return user["name"]
-    raise HTTPException(status_code=HTTP_302_FOUND, detail="Not authenticated", headers={"Location": "/login-page"})
+    raise HTTPException(
+        status_code=HTTP_302_FOUND,
+        detail="Not authenticated",
+        headers={"Location": "/login-page"},
+    )
 
 
 @app.get("/")
@@ -98,11 +102,13 @@ async def auth(request: Request):
     request.session["user"] = user
     return RedirectResponse(url="/")
 
+
 # =====================================================================
 #
 # Assistant
 #
 # =====================================================================
+
 
 def handle_undo(history, undo_data: gr.UndoData):
     return history[: undo_data.index], history[undo_data.index]["content"]
@@ -187,11 +193,13 @@ def get_user_conversations(request: gr.Request):
             for message_key in conversation.keys()
             if message_key.startswith("messages")
         ]
-        
+
         try:
             messages = json.loads("".join(all_messages))
         except json.JSONDecodeError:
-            print(f"Failed to decode messages for conversation {conversation["PartitionKey"]} and {conversation["RowKey"]}")
+            print(
+                f"Failed to decode messages for conversation {conversation['PartitionKey']} and {conversation['RowKey']}"
+            )
             continue
 
         previous_conversations.append(
@@ -231,6 +239,7 @@ assistant_instance = Assistant.Assistant(
 #
 # =====================================================================
 
+
 def perform_search(
     query: str,
     year_range: list[int],
@@ -249,7 +258,7 @@ def perform_search(
 
     document_type_mapping = {
         "Safety Issues": "safety_issue",
-        "Safety Recommendations": "safety_recommendation",
+        "Safety Recommendations": "recommendation",
         "Report sections": "report_section",
         "Entire Reports": "report_text",
     }
@@ -258,7 +267,6 @@ def perform_search(
         document_type_mapping[dt] for dt in document_type if dt in document_type_mapping
     ]
 
-
     results = searching_instance.knowledge_search(
         query=query,
         year_range=year_range,
@@ -266,9 +274,20 @@ def perform_search(
         modes=modes,
         agencies=agencies,
         type=search_type,
+        limit=5000,
+        relevance=relevance,
     )
 
-    return results
+    # Format the results to be displayed in the dataframe
+    results["agency_id"] = results.apply(
+        lambda x: f"<a href='{x['url']}' style='color: #1a73e8; text-decoration-line: underline;'>{x['agency_id']}</a>", axis=1
+    )
+    results.drop(columns=["url"], inplace=True)
+
+    message = f"""Found {len(results)} results from database.  
+_These are the relevant results from the search of the database, there is a no guarantee of its completeness._"""
+
+    return results, message
 
 
 def get_welcome_message(request: gr.Request):
@@ -307,7 +326,8 @@ with gr.Blocks(
                         for conversation in conversations:
                             with gr.Row():
                                 gr.Markdown(
-                                    f"### {conversation['conversation_title']}", container=False
+                                    f"### {conversation['conversation_title']}",
+                                    container=False,
                                 )
 
                                 def load_conversation(conversation=conversation):
@@ -345,6 +365,7 @@ with gr.Blocks(
                 with gr.Column(scale=1):
                     query = gr.Textbox(label="Search Query")
                     search_button = gr.Button("Search")
+                    search_summary = gr.Markdown()
                 with gr.Column(scale=1):
                     with gr.Accordion("Advanced Search Options", open=True):
                         current_year = datetime.now().year
@@ -361,15 +382,15 @@ with gr.Blocks(
                                 "Safety Issues",
                                 "Safety Recommendations",
                                 "Report sections",
-                                "Entire Reports"
+                                "Entire Reports",
                             ],
-                            value=["Safety Issues", "Safety Recommendations"],    
+                            value=["Safety Issues", "Safety Recommendations"],
                         )
                         modes = gr.CheckboxGroup(
                             label="Modes of Transport",
                             choices=["Aviation", "Rail", "Maritime"],
                             value=["Aviation", "Rail", "Maritime"],
-                            type="index"
+                            type="index",
                         )
                         agencies = gr.CheckboxGroup(
                             label="Agencies",
@@ -384,7 +405,6 @@ with gr.Blocks(
                             value=0.6,
                         )
 
-                    
                     search = [
                         query,
                         year_range,
@@ -396,14 +416,33 @@ with gr.Blocks(
 
             with gr.Row():
                 search_results = gr.Dataframe(
+                    max_chars=1500,
+                    max_height=10000,
                     pinned_columns=1,
                     wrap=True,
                     type="pandas",
+                    datatype=[
+                        "number",
+                        "str",
+                        "str",
+                        "str",
+                        "number",
+                        "str",
+                        "str",
+                        "str",
+                        "html",
+                        "str",
+                    ],
+                    show_fullscreen_button=True,
+                    show_search="search",
                 )
 
-            search_button.click(perform_search, inputs=search, outputs=search_results)
-
-
+            search_button.click(perform_search, inputs=search, outputs=[search_results, search_summary])
+            query.submit(
+                perform_search,
+                inputs=search,
+                outputs=[search_results, search_summary],
+            )
 
     chatbot_interface.undo(
         fn=handle_undo,

@@ -1,9 +1,7 @@
 import json
 import openai
-import voyageai
-import lancedb
 from datetime import datetime
-from rich import print, table
+from rich import print
 
 
 class Assistant:
