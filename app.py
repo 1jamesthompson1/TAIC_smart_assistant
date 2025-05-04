@@ -19,6 +19,7 @@ from azure.data.tables import TableServiceClient
 import json
 from datetime import datetime
 import pandas as pd
+import traceback
 
 from backend import Assistant, Searching
 
@@ -28,6 +29,7 @@ dotenv.load_dotenv(override=True)
 connection_string = f"AccountName={os.getenv('AZURE_STORAGE_ACCOUNT_NAME')};AccountKey={os.getenv('AZURE_STORAGE_ACCOUNT_KEY')};EndpointSuffix=core.windows.net"
 client = TableServiceClient.from_connection_string(conn_str=connection_string)
 chatlogs = client.create_table_if_not_exists(table_name="chatlogs")
+knowledgesearchlogs = client.create_table_if_not_exists(table_name="knowledgesearchlogs")
 
 app = FastAPI()
 
@@ -246,8 +248,8 @@ assistant_instance = Assistant.Assistant(
 #
 # =====================================================================
 
-
 def perform_search(
+    username: str,
     query: str,
     year_range: list[int],
     document_type: list[str],
@@ -255,60 +257,125 @@ def perform_search(
     agencies: list[str],
     relevance: float,
 ):
-    search_start_time = datetime.now()
-    search_type = (
-        "none"
-        if (query == "" or query is None)
-        else ("fts" if query[0] == '"' and query[-1] == '"' else "vector")
-    )
-    if search_type == "fts":
-        query = query[1:-1]
+    error, error_trace = None, None
+    created_search, search, clean_results = True, True, True
 
-    document_type_mapping = {
-        "Safety Issues": "safety_issue",
-        "Safety Recommendations": "recommendation",
-        "Report sections": "report_section",
-        "Entire Reports": "report_text",
-    }
-
-    mapped_document_type = [
-        document_type_mapping[dt] for dt in document_type if dt in document_type_mapping
-    ]
-    search_settings = {
-        "query": query,
-        "year_range": (year_range[0], year_range[1]),
-        "document_type": mapped_document_type,
-        "modes": modes,
-        "agencies": agencies,
-        "type": search_type,
-        "limit": 5000,
-        "relevance": relevance,
-    }
-
-    results, info, plots = searching_instance.knowledge_search(**search_settings)
-    results_to_download = results.copy()
-
-    # Format the results to be displayed in the dataframe
-    if not results.empty:
-        results["agency_id"] = results.apply(
-            lambda x: f"<a href='{x['url']}' style='color: #1a73e8; text-decoration-line: underline;'>{x['agency_id']}</a>",
-            axis=1,
+    search_start_time, search_settings = None, None
+    try:
+        search_start_time = datetime.now()
+        search_type = (
+            "none"
+            if (query == "" or query is None)
+            else ("fts" if query[0] == '"' and query[-1] == '"' else "vector")
         )
-        results.drop(columns=["url"], inplace=True)
-        message = f"""Found {info["relevant_results"]} results from database.  
-_These are the relevant results (out of {info["total_results"]}) from the search of the database, there is a no guarantee of its completeness._"""
-    else:
-        message = "No results found for the given criteria."
-        # Ensure plots are None if no results
-        plots = {
-            k: None for k in ["document_type", "mode", "year", "agency", "event_type"]
+        if search_type == "fts":
+            query = query[1:-1]
+
+        document_type_mapping = {
+            "Safety Issues": "safety_issue",
+            "Safety Recommendations": "recommendation",
+            "Report sections": "report_section",
+            "Entire Reports": "report_text",
         }
 
-    download_dict = {
-        "settings": search_settings,
-        "results": results_to_download,
-        "search_start_time": search_start_time,
+        mapped_document_type = [
+            document_type_mapping[dt] for dt in document_type if dt in document_type_mapping
+        ]
+        search_settings = {
+            "query": query,
+            "year_range": (year_range[0], year_range[1]),
+            "document_type": mapped_document_type,
+            "modes": modes,
+            "agencies": agencies,
+            "type": search_type,
+            "limit": 5000,
+            "relevance": relevance,
+        }
+    except Exception as e:
+        print(f"[bold red]Error in search settings: {e}[/bold red]")
+        error = e
+        error_trace = traceback.format_exc()
+        search_settings = None
+        created_search = False
+        search = False
+        clean_results = False
+
+    results, info , plots = None, None, None
+    if error is None:
+        try:
+            results, info, plots = searching_instance.knowledge_search(**search_settings)
+        except Exception as e:
+            print(f"[bold red]Error in search: {e}[/bold red]")
+            error = e
+            error_trace = traceback.format_exc()
+            search = False
+            clean_results = False
+
+    results_to_download, download_dict = None, None
+    if error is None: 
+        try: 
+            results_to_download = results.copy()
+            # Format the results to be displayed in the dataframe
+            if not results.empty:
+                results["agency_id"] = results.apply(
+                    lambda x: f"<a href='{x['url']}' style='color: #1a73e8; text-decoration-line: underline;'>{x['agency_id']}</a>",
+                    axis=1,
+                )
+                results.drop(columns=["url"], inplace=True)
+                message = f"""Found {info["relevant_results"]} results from database.  
+        _These are the relevant results (out of {info["total_results"]}) from the search of the database, there is a no guarantee of its completeness._"""
+            else:
+                message = "No results found for the given criteria."
+                # Ensure plots are None if no results
+                plots = {
+                    k: None for k in ["document_type", "mode", "year", "agency", "event_type"]
+                }
+
+            download_dict = {
+                "settings": search_settings,
+                "results": results_to_download,
+                "search_start_time": search_start_time,
+                "username": username,
+            }
+        except Exception as e:
+            print(f"[bold red]Error in formatting results: {e}[/bold red]")
+            error = e
+            error_trace = traceback.format_exc()
+            clean_results = False
+
+    # Logging search
+    basics = {
+        "PartitionKey": username,
+        "RowKey": str(uuid.uuid4()),
+        "search_start_time": search_start_time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    search = {
+        "settings": json.dumps(search_settings),
+    } if created_search else {
+        "settings": None,
+    }
+    results_log = {
+        "results": results.head(100).drop(columns=["document"]).to_json(orient="records"),
+        "relevant_results": info["relevant_results"],
+        "total_results": info["total_results"],
+    } if clean_results else {
+        "results": None,
+        "relevant_results": None,
+        "total_results": None,
+    }
+
+    knowledgesearchlogs.create_entity(
+        entity={
+            **basics,
+            **search,
+            **results_log,
+            "error": error_trace if error else None,
+        }
+    )
+
+    if error is not None:
+        raise gr.Error(f"An error has occurred during your search, please refresh page and try again.\nError: {error}", duration=5)
+
     # Return plots along with results and message
     return (
         results,
@@ -334,11 +401,11 @@ def update_download_button(download_dict: dict):
         summary_sheet.title = "Summary"
 
         summary_sheet.cell(row=1, column=1, value="This spreadsheet contains the results of a search conducted using the TAIC knowledge search tool.")
-        summary_sheet.cell(row=2, column=1, value=f"The search was conducted on {download_dict['search_start_time']}. The settings used for the search can be found below and the full results can be found in the 'Results' sheet.")
+        summary_sheet.cell(row=2, column=1, value=f"The search was conducted on {download_dict['search_start_time'].strftime('%Y-%m-%d %H:%M:%S')} by {download_dict['username']}. The settings used for the search can be found below and the full results can be found in the 'Results' sheet.")
 
         for row, (key, value) in enumerate(download_dict["settings"].items()):
-            summary_sheet.cell(row=row+2, column=1, value=f"{key}:")
-            summary_sheet.cell(row=row+2, column=2, value=str(value))
+            summary_sheet.cell(row=row+3, column=1, value=f"{key}:")
+            summary_sheet.cell(row=row+3, column=2, value=str(value))
 
         wb.save(file_path)
         wb.close()
@@ -356,6 +423,9 @@ def update_download_button(download_dict: dict):
 
 def get_welcome_message(request: gr.Request):
     return request.username, f"Data last updated: {searching_instance.last_updated}"
+
+def get_user_name(request: gr.Request):
+    return request.username
 
 
 TAIC_theme = gr.themes.Default(
@@ -402,20 +472,22 @@ with gr.Blocks(
     fill_height=True,
     fill_width=True,
     head='<link rel="icon" href="/static/favicon.png" type="image/png">',
-) as assistant_page:
-    user_conversations = gr.State([])
+) as smart_tools:
+    username = gr.State()
+    smart_tools.load(get_user_name, inputs=None, outputs=username)
 
-    assistant_page.load(get_user_conversations, inputs=None, outputs=user_conversations)
+    user_conversations = gr.State([])
+    smart_tools.load(get_user_conversations, inputs=None, outputs=user_conversations)
 
     with gr.Row():
         gr.Markdown("# TAIC smart tools")
         data_update = gr.Markdown("Data last updated: ")
         gr.Markdown("Logged in as:")
-        username = gr.Markdown()
+        username_display = gr.Markdown()
         logout_button = gr.Button("Logout", link="/logout")
 
     # Redirect to login page if not logged in
-    assistant_page.load(get_welcome_message, inputs=[], outputs=[username, data_update])
+    smart_tools.load(get_welcome_message, inputs=None, outputs=[username_display, data_update])
 
     with gr.Tabs():
         with gr.TabItem("Assistant"):
@@ -553,6 +625,7 @@ with gr.Blocks(
                         )
 
                     search = [
+                        username,
                         query,
                         year_range,
                         document_type,
@@ -615,7 +688,7 @@ with gr.Blocks(
     footer = get_footer()
 
 app = gr.mount_gradio_app(
-    app, assistant_page, path="/assistant", auth_dependency=get_user, show_api=False
+    app, smart_tools, path="/assistant", auth_dependency=get_user, show_api=False
 )
 
 
