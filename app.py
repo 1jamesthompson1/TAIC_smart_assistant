@@ -142,8 +142,20 @@ def create_or_update_conversation(request: gr.Request, conversation_id, history)
     MAX_LEN = 30000
     history_chunks = []
     while len(history_json) > MAX_LEN:
-        history_chunks.append(history_json[:MAX_LEN])
-        history_json = history_json[MAX_LEN:]
+        # Find the closest occurrence of "</td>" or "{" from the end within the MAX_LEN limit
+        split_index = max(
+            history_json.rfind(" <td>", 0, MAX_LEN),
+            history_json.rfind(" {", 0, MAX_LEN),
+        )
+        # If neither is found, fallback to splitting at MAX_LEN
+        if split_index == -1:
+            split_index = MAX_LEN
+            print("[bold red]Warning couldn't find safe splitting point, splitting at MAX_LEN[/bold red]")
+        else:
+            split_index += 1  # Include the matched character(s) in the chunk
+
+        history_chunks.append(history_json[:split_index])
+        history_json = history_json[split_index:]
     history_chunks.append(history_json)
 
     messages = {
@@ -208,10 +220,11 @@ def get_user_conversations(request: gr.Request):
 
         try:
             messages = json.loads("".join(all_messages))
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             print(
                 f"Failed to decode messages for conversation {conversation['PartitionKey']} and {conversation['RowKey']}"
             )
+            print(f"Error: {e}")
             continue
 
         previous_conversations.append(
