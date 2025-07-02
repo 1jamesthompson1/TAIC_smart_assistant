@@ -1,7 +1,8 @@
 import subprocess
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import argparse
 
 def run_command(cmd, capture_output):
     """Run a shell command and return output."""
@@ -19,42 +20,47 @@ def run_command(cmd, capture_output):
         sys.exit(1)
 
 def main():
-    # User-configurable variables
-    account_name = "taicdocumentsearcherdata"
-    container_name = "vectordb"
-    blob_path = "prod/all_document_types.lance"
-    local_dir = "./testing"
+    """Main function to download vector database using Azure CLI and AzCopy."""
+    parser = argparse.ArgumentParser(description="Download vector database from Azure Blob Storage using AzCopy.")
+    parser.add_argument('--account-name', type=str, help='Azure Storage account name', default="taicdocumentsearcherdata")
+    parser.add_argument('--container-name', type=str, help='Azure Storage container name', default="vectordb")
+    parser.add_argument('--blob-path', type=str, help='Path to the blob in Azure Storage', default="prod/all_document_types.lance")
+    parser.add_argument('--local-dir', type=str, help='Local directory to save the downloaded files', default="./testing")
+    parser.add_argument('--log-level', type=str, help='Logging level', default="INFO")
+
+    args = parser.parse_args()
 
     # Set expiry to 1 day from now in UTC
-    expiry = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    expiry = (datetime.now(timezone.utc) + timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
     print(f"Using SAS expiry time: {expiry}")
-
     # Generate SAS token command
     sas_cmd = [
         "az", "storage", "container", "generate-sas",
-        "--account-name", account_name,
-        "--name", container_name,
+        "--account-name", args.account_name,
+        "--name", args.container_name,
         "--permissions", "rl",
         "--expiry", expiry,
         "--output", "tsv",
     ]
 
-    print("Generating SAS token...")
+    print(f"Generating SAS token...\nWith command:\n{' '.join(sas_cmd)}")
+
     sas_token = run_command(sas_cmd, capture_output=True)
     sas_token = sas_token.strip()
 
-    if blob_path.startswith('/'):
-        blob_path = blob_path[1:]
+    if args.blob_path.startswith('/'):
+        args.blob_path = args.blob_path[1:]
 
-    blob_url = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_path}?{sas_token}"
+    blob_url = f"https://{args.account_name}.blob.core.windows.net/{args.container_name}/{args.blob_path}?{sas_token}"
 
     print(f"Blob URL with SAS token:\n{blob_url}")
 
     azcopy_cmd = [
         "azcopy", "copy",
         blob_url,
-        local_dir,
-        "--recursive"
+        args.local_dir,
+        "--recursive",
+        "--log-level", args.log_level
     ]
 
     print("Starting azcopy download...")
