@@ -243,18 +243,18 @@ class ConversationMetadataStore:
             print(f"✗ Failed to store conversation {conversation_id}: {e}")
             return False
     
-    def get_user_conversations(self, username: str) -> List[Dict]:
+    def get_user_conversations_metadata(self, username: str) -> List[Dict]:
         """
-        Retrieve all conversations for a user from Blob Storage.
+        Retrieve only conversation metadata for a user (no full message history).
         
         Args:
             username: Username to retrieve conversations for
             
         Returns:
-            List of conversations with full message history
+            List of conversation metadata without full message history
         """
         try:
-            # Get metadata from Table Storage
+            # Get metadata from Table Storage only
             entities = self.table_client.query_entities(
                 query_filter=f"PartitionKey eq '{username}'"
             )
@@ -262,20 +262,13 @@ class ConversationMetadataStore:
             conversations = []
             
             for entity in entities:
-                conversation_id = entity.get("RowKey")
-                
-                history = self.blob_store.retrieve_conversation_blob(username, conversation_id)
-                if history is None:
-                    print(f"⚠ Could not retrieve blob for conversation {conversation_id}")
-                    continue
-                
                 conversations.append({
                     "conversation_title": entity.get("conversation_title"),
-                    "messages": history,
-                    "id": conversation_id,
+                    "id": entity.get("RowKey"),
                     "last_updated": entity.get("last_updated"),
                     "created_at": entity.get("created_at"),
-                    "message_count": entity.get("message_count", len(history)),
+                    "message_count": entity.get("message_count", 0),
+                    "blob_name": entity.get("blob_name"),
                 })
             
             # Sort by last updated
@@ -284,12 +277,51 @@ class ConversationMetadataStore:
                 reverse=True
             )
             
-            print(f"✓ Retrieved {len(conversations)} conversations for {username}")
+            print(f"✓ Retrieved metadata for {len(conversations)} conversations for {username}")
             return conversations
             
         except Exception as e:
-            print(f"✗ Failed to retrieve conversations for {username}: {e}")
+            print(f"✗ Failed to retrieve conversation metadata for {username}: {e}")
             return []
+
+    def load_single_conversation(self, username: str, conversation_id: str) -> Optional[Dict]:
+        """
+        Load a single conversation with full message history.
+        
+        Args:
+            username: Username of the conversation owner
+            conversation_id: ID of the conversation to load
+            
+        Returns:
+            Dictionary with conversation data including full message history, or None if not found
+        """
+        try:
+            # Get metadata from Table Storage
+            entity = self.table_client.get_entity(
+                partition_key=username, 
+                row_key=conversation_id
+            )
+            
+            # Get full conversation history from blob storage
+            history = self.blob_store.retrieve_conversation_blob(username, conversation_id)
+            if history is None:
+                print(f"⚠ Could not retrieve blob for conversation {conversation_id}")
+                return None
+            
+            conversation = {
+                "conversation_title": entity.get("conversation_title"),
+                "messages": history,
+                "id": conversation_id,
+                "last_updated": entity.get("last_updated"),
+                "created_at": entity.get("created_at"),
+                "message_count": entity.get("message_count", len(history)),
+            }
+            
+            return conversation
+            
+        except Exception as e:
+            print(f"✗ Failed to load conversation {conversation_id} for {username}: {e}")
+            return None
     
     def delete_conversation(self, username: str, conversation_id: str) -> bool:
         """

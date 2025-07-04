@@ -171,13 +171,30 @@ def create_or_update_conversation(request: gr.Request, conversation_id, history)
         print(f"[bold red]✗ Failed to store conversation {conversation_id}[/bold red]")
 
 
-def get_user_conversations(request: gr.Request):
+def get_user_conversations_metadata(request: gr.Request):
     username = request.username
     
-    # Get conversations from blob storage
-    conversations = conversation_store.get_user_conversations(username)
-    print(f"[bold green]✓ Retrieved {len(conversations)} conversations from blob storage[/bold green]")
+    # Get only conversation metadata (no full message history)
+    conversations = conversation_store.get_user_conversations_metadata(username)
+    print(f"[bold green]✓ Retrieved metadata for {len(conversations)} conversations[/bold green]")
     return conversations
+
+
+def load_conversation(request: gr.Request, conversation_id: str):
+    username = request.username
+
+    print(f"[orange]Loading conversation {conversation_id} for user {username}[/orange]")
+    
+    # Load the full conversation with message history
+    conversation = conversation_store.load_single_conversation(username, conversation_id)
+    if conversation:
+        print(f"[bold green]✓ Loaded conversation {conversation_id}[/bold green]")
+        formatted_id = f"`{conversation['id']}`"
+        formatted_title = f"**{conversation['conversation_title']}**"
+        return conversation["messages"], formatted_id, formatted_title
+    else:
+        print(f"[bold red]✗ Failed to load conversation {conversation_id}[/bold red]")
+        return [], f"`{conversation_id}`", "*Failed to load*"
 
 
 searching_instance = Searching.Searcher(
@@ -476,7 +493,7 @@ with gr.Blocks(
     smart_tools.load(get_user_name, inputs=None, outputs=username)
 
     user_conversations = gr.State([])
-    smart_tools.load(get_user_conversations, inputs=None, outputs=user_conversations)
+    smart_tools.load(get_user_conversations_metadata, inputs=None, outputs=user_conversations)
 
     with gr.Row():
         gr.Markdown("# TAIC smart tools")
@@ -493,9 +510,13 @@ with gr.Blocks(
         with gr.TabItem("Assistant"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.Markdown("### Current conversation")
-                    conversation_id = gr.Markdown(str(uuid.uuid4()))
-                    gr.Markdown("### Previous conversations")
+                    gr.Markdown("## Current conversation")
+                    with gr.Group():
+                        gr.Markdown("**Conversation ID:**")
+                        conversation_id = gr.Markdown(f"`{str(uuid.uuid4())}`")
+                        gr.Markdown("**Title:**")
+                        conversation_title = gr.Markdown("*New conversation*")
+                    gr.Markdown("## Previous conversations")
 
                     @gr.render(inputs=[user_conversations])
                     def render_conversations(conversations):
@@ -506,13 +527,15 @@ with gr.Blocks(
                                     container=False,
                                 )
 
-                                def load_conversation(conversation=conversation):
-                                    return conversation["messages"], conversation["id"]
+                                def create_load_function(conv_id):
+                                    def load_func(request: gr.Request):
+                                        return load_conversation(request, conv_id)
+                                    return load_func
 
                                 gr.Button("load").click(
-                                    fn=load_conversation,
+                                    fn=create_load_function(conversation["id"]),
                                     inputs=None,
-                                    outputs=[chatbot_interface, conversation_id],
+                                    outputs=[chatbot_interface, conversation_id, conversation_title],
                                 )
 
                 with gr.Column(scale=3):
@@ -556,7 +579,7 @@ with gr.Blocks(
                 inputs=[conversation_id, chatbot_interface],
                 outputs=None,
             ).then(
-                get_user_conversations,
+                get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
             ).then(
@@ -566,12 +589,12 @@ with gr.Blocks(
             )
 
             chatbot_interface.clear(
-                lambda: (str(uuid.uuid4()), []),
+                lambda: (f"`{str(uuid.uuid4())}`", [], "*New conversation*"),
                 None,
-                [conversation_id, chatbot_interface],
+                [conversation_id, chatbot_interface, conversation_title],
                 queue=False,
             ).then(
-                get_user_conversations,
+                get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
             )
@@ -590,7 +613,7 @@ with gr.Blocks(
                 inputs=[conversation_id, chatbot_interface],
                 outputs=None,
             ).then(
-                get_user_conversations,
+                get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
             ).then(
