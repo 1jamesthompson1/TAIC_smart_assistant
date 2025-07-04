@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional, Union
 from azure.storage.blob import BlobServiceClient
 from abc import ABC, abstractmethod
 import os
+from . import Version
 
 
 class BaseBlobStore(ABC):
@@ -350,6 +351,7 @@ class ConversationMetadataStore:
                 "message_count": len(history),
                 "last_updated": now,
                 "created_at": existing_entity.get("created_at", now) if existing_entity else now,
+                "app_version": Version.CURRENT_VERSION,
             }
             
             # Upsert the entity (create or update)
@@ -388,6 +390,7 @@ class ConversationMetadataStore:
                     "created_at": entity.get("created_at"),
                     "message_count": entity.get("message_count", 0),
                     "blob_name": entity.get("blob_name"),
+                    "app_version": entity.get("app_version"),
                 })
             
             # Sort by last updated
@@ -434,6 +437,7 @@ class ConversationMetadataStore:
                 "last_updated": entity.get("last_updated"),
                 "created_at": entity.get("created_at"),
                 "message_count": entity.get("message_count", len(history)),
+                "app_version": entity.get("app_version"),
             }
             
             return conversation
@@ -538,6 +542,7 @@ class KnowledgeSearchMetadataStore:
                 "blob_name": blob_name,
                 "search_timestamp": now,
                 "created_at": now,
+                "app_version": Version.CURRENT_VERSION,
             }
             
             # Store metadata
@@ -581,6 +586,7 @@ class KnowledgeSearchMetadataStore:
                     "search_timestamp": entity.get("search_timestamp"),
                     "created_at": entity.get("created_at"),
                     "blob_name": entity.get("blob_name"),
+                    "app_version": entity.get("app_version"),
                 })
             
             # Sort by search timestamp (most recent first)

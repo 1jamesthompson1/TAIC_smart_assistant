@@ -21,7 +21,7 @@ from datetime import datetime
 import pandas as pd
 import traceback
 
-from backend import Assistant, Searching, Storage
+from backend import Assistant, Searching, Storage, Version
 
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv(override=True)
@@ -197,9 +197,30 @@ def load_conversation(request: gr.Request, conversation_id: str):
     # Load the full conversation with message history
     conversation = conversation_store.load_single_conversation(username, conversation_id)
     if conversation:
+        # Check version compatibility
+        stored_version = conversation.get("app_version")
+        is_compatible, version_message = Version.is_compatible(stored_version or "")
+        
+        if not is_compatible:
+            print(f"[bold red]⚠ Version incompatibility for conversation {conversation_id}: {version_message}[/bold red]")
+            formatted_id = f"`{conversation['id']}`"
+            formatted_title = f"**{conversation['conversation_title']}** ⚠️ *Version Incompatible*"
+            # Return empty messages with error indication
+            error_messages = [{
+                "role": "assistant", 
+                "content": f"⚠️ **Version Compatibility Error**\n\n{version_message}\n\nThis conversation may not load correctly due to version differences. Consider creating a new conversation."
+            }] + conversation["messages"]
+            return error_messages, formatted_id, formatted_title
+        
+        if version_message:  # Minor version differences
+            print(f"[orange]⚠ Version warning for conversation {conversation_id}: {version_message}[/orange]")
+            # Add a subtle warning to the title but still load the conversation
+            formatted_title = f"**{conversation['conversation_title']}** ⚠️"
+        else:
+            formatted_title = f"**{conversation['conversation_title']}**"
+        
         print(f"[bold green]✓ Loaded conversation {conversation_id}[/bold green]")
         formatted_id = f"`{conversation['id']}`"
-        formatted_title = f"**{conversation['conversation_title']}**"
         return conversation["messages"], formatted_id, formatted_title
     else:
         print(f"[bold red]✗ Failed to load conversation {conversation_id}[/bold red]")
@@ -489,7 +510,7 @@ def update_download_button(download_dict: dict):
 
 
 def get_welcome_message(request: gr.Request):
-    return request.username, f"Data last updated: {searching_instance.last_updated}"
+    return request.username, f"Data last updated: {searching_instance.last_updated} | App version: {Version.CURRENT_VERSION}"
 
 
 def get_user_name(request: gr.Request):

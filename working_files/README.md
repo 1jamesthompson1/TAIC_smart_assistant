@@ -1,3 +1,8 @@
-This is a space to put the files that are used in development process but are not part of the codebase.
+# Working files
 
-I track them simply to save previous work so that it can be checked on in the future.
+This is a collection of notebook and scripts that are useful for development but want to keep from clogging up the root direcotry.
+
+| name | purpose | link |
+| -- | -- | -- |
+| Usage logs | This can be used for either interactive investigation of the app usage logs or making a semi presentable report | [usage_logs.ipynb](working_files/usage_logs.ipynb)
+| Download vector db | This script can be run to downlaod the atest version fo the vector db from the azure storage location. Helpful for locally development | [download_vector_db.ipynb](working_files/download_vector_db.py)
