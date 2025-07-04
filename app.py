@@ -279,6 +279,7 @@ def load_previous_search(request: gr.Request, search_id: str):
             "recommendation": "Safety Recommendations", 
             "report_section": "Report sections",
             "report_text": "Entire Reports",
+            "summary": "Summary",
         }
         mapped_document_types = search_settings.get('document_type', [])
         if isinstance(mapped_document_types, list):
