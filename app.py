@@ -33,19 +33,28 @@ client = TableServiceClient.from_connection_string(conn_str=connection_string)
 knowledgesearchlogs_table_name = os.getenv("KNOWLEDGE_SEARCH_LOGS_TABLE_NAME")
 conversation_metadata_table_name = os.getenv("CONVERSATION_METADATA_TABLE_NAME")
 conversation_container_name = os.getenv("CONVERSATION_CONTAINER_NAME")
+knowledge_search_container_name = os.getenv("KNOWLEDGE_SEARCH_CONTAINER_NAME", "knowledgesearchlogs")
 
 # Check all environment variables are set
 if not all([knowledgesearchlogs_table_name, conversation_metadata_table_name, conversation_container_name]):
     missing_vars = [var for var in ["KNOWLEDGE_SEARCH_LOGS_TABLE_NAME", "CONVERSATION_METADATA_TABLE_NAME", "CONVERSATION_CONTAINER_NAME"] if not locals()[var]]
     raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
 
+# Initialize Table Storage clients
 knowledgesearchlogs = client.create_table_if_not_exists(
     table_name=knowledgesearchlogs_table_name
 )
 chatlogs = client.create_table_if_not_exists(table_name=conversation_metadata_table_name)
-blob_store = Storage.ConversationBlobStore(connection_string, conversation_container_name)
-conversation_store = Storage.ConversationMetadataStore(chatlogs, blob_store)
-print("[bold green]✓ Blob storage conversation store initialized[/bold green]")
+
+# Initialize Blob Storage clients
+conversation_blob_store = Storage.ConversationBlobStore(connection_string, conversation_container_name)
+knowledge_search_blob_store = Storage.KnowledgeSearchBlobStore(connection_string, knowledge_search_container_name)
+
+# Initialize metadata stores
+conversation_store = Storage.ConversationMetadataStore(chatlogs, conversation_blob_store)
+knowledge_search_store = Storage.KnowledgeSearchMetadataStore(knowledgesearchlogs, knowledge_search_blob_store)
+
+print("[bold green]✓ All storage systems initialized[/bold green]")
 
 app = FastAPI()
 
@@ -197,6 +206,8 @@ def load_conversation(request: gr.Request, conversation_id: str):
         return [], f"`{conversation_id}`", "*Failed to load*"
 
 
+
+
 searching_instance = Searching.Searcher(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     voyageai_api_key=os.getenv("VOYAGEAI_API_KEY"),
@@ -214,6 +225,65 @@ assistant_instance = Assistant.Assistant(
 #
 # =====================================================================
 
+def get_user_search_history(request: gr.Request):
+    username = request.username
+    
+    # Get only search metadata (no full detailed data)
+    searches = knowledge_search_store.get_user_search_history(username, limit=20)
+    print(f"[bold green]✓ Retrieved metadata for {len(searches)} searches[/bold green]")
+    return searches
+
+
+def load_previous_search(request: gr.Request, search_id: str):
+    username = request.username
+
+    print(f"[orange]Loading search {search_id} for user {username}[/orange]")
+    
+    # Load the full search with detailed data
+    search_data = knowledge_search_store.load_detailed_search(username, search_id)
+    if search_data:
+        print(f"[bold green]✓ Loaded search {search_id}[/bold green]")
+        
+        # Extract search settings from detailed data
+        detailed_data = search_data['detailed_data']
+        search_settings = detailed_data.get('search_settings', {})
+        
+        # Return values to populate the search form
+        query = search_settings.get('query', '')
+        year_range = list(search_settings.get('year_range', [2007, datetime.now().year]))
+        
+        # Map document types back to UI format
+        document_type_reverse_mapping = {
+            "safety_issue": "Safety Issues",
+            "recommendation": "Safety Recommendations", 
+            "report_section": "Report sections",
+            "report_text": "Entire Reports",
+        }
+        mapped_document_types = search_settings.get('document_type', [])
+        if isinstance(mapped_document_types, list):
+            document_type = [
+                document_type_reverse_mapping.get(dt, dt) for dt in mapped_document_types
+            ]
+        else:
+            document_type = document_type_reverse_mapping.get(mapped_document_types, mapped_document_types)
+
+        mode_mapping = {
+            0: "Aviation",
+            1: "Rail",
+            2: "Maritime",
+        }
+        modes = search_settings.get('modes', [])
+        if isinstance(modes, list):
+            modes = [mode_mapping.get(mode, mode) for mode in modes]
+        else:
+            modes = [mode_mapping.get(modes, modes)]
+        agencies = search_settings.get('agencies', [])
+        relevance = search_settings.get('relevance', 0.6)
+        
+        return query, year_range, document_type, modes, agencies, relevance
+    else:
+        print(f"[bold red]✗ Failed to load search {search_id}[/bold red]")
+        return "", [2007, datetime.now().year], [], [], [], 0.6
 
 def perform_search(
     username: str,
@@ -315,64 +385,45 @@ def perform_search(
             error_trace = traceback.format_exc()
             clean_results = False
 
-    # Logging search
-    basics = {
-        "PartitionKey": username,
-        "RowKey": str(uuid.uuid4()),
-        "search_start_time": search_start_time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    search = (
-        {
-            "settings": json.dumps(search_settings),
-        }
-        if created_search
-        else {
-            "settings": None,
-        }
-    )
+    # Logging search using new knowledge search storage system
+    search_id = str(uuid.uuid4())
     
-    results_log = (
-        {
-            "results": results.head(100)
-            .drop(columns=["document"])
-            .to_json(orient="records"),
-            "relevant_results": info["relevant_results"],
-            "total_results": info["total_results"],
+    # Prepare error information if any
+    error_info = None
+    if error is not None:
+        error_info = {
+            "error": str(error),
+            "error_trace": error_trace,
+            "occurred_at": datetime.now().isoformat()
         }
-        if clean_results
-        else {
-            "results": None,
-            "relevant_results": None,
-            "total_results": None,
-        }
-    )
-
-    # Make sure that the results are not too large to be stored in the usage logs. I dont need all the items but having an idea of what documents were returned is useful.
-    if results_log["results"] is not None:
-        results_size = len(results_log["results"])
-        while results_size > 32_000:
-            print("Trimming results to fit size limit, current size:", results_size)
-            current_df = pd.read_json(results_log["results"])
-            if current_df.shape[0] > 20:
-                results_log["results"] = current_df.iloc[:-10].to_json(
-                    orient="records"
-                )
-            else:
-                results_log["results"] = current_df.iloc[:-1].to_json(
-                    orient="records"
-                )
-            results_size = len(results_log["results"])
-
-
-
-    knowledgesearchlogs.create_entity(
-        entity={
-            **basics,
-            **search,
-            **results_log,
-            "error": error_trace if error else None,
-        }
-    )
+    
+    # Prepare results information
+    results_info = {
+        "total_results": info.get("total_results", 0) if info else 0,
+        "relevant_results": info.get("relevant_results", 0) if info else 0,
+        "has_results": clean_results and results is not None,
+        "plots_generated": plots is not None,
+    }
+    
+    # Add trimmed results data for storage (if available)
+    if clean_results and results is not None:
+        # Prepare results for storage (trimmed version)
+        trimmed_results = results.head(100).drop(columns=["document"], errors='ignore')
+        results_info["sample_results"] = trimmed_results.to_dict(orient="records")
+    
+    # Store using new knowledge search storage system
+    try:
+        knowledge_search_store.store_search_log(
+            username=username,
+            search_id=search_id,
+            search_settings=search_settings or {},
+            results_info=results_info,
+            error_info=error_info
+        )
+        print(f"✓ Stored search log with ID: {search_id}")
+    except Exception as e:
+        print(f"✗ Failed to store search log: {e}")
+        # Log the error but don't fall back to old system
 
     if error is not None:
         raise gr.Error(
@@ -624,8 +675,40 @@ with gr.Blocks(
 
         with gr.TabItem("Knowledge Search"):
             search_results_to_download = gr.State(None)
+            user_search_history = gr.State([])
+            smart_tools.load(get_user_search_history, inputs=None, outputs=user_search_history)
+            
             with gr.Row():
                 with gr.Column(scale=1):
+                    gr.Markdown("## Previous searches")
+
+                    @gr.render(inputs=[user_search_history])
+                    def render_search_history(search_history):
+                        for search in search_history:
+                            with gr.Row():
+                                query_text = search.get('query', 'No query')
+                                if len(query_text) > 30:
+                                    query_text = query_text[:30] + "..."
+                                timestamp = search.get('search_timestamp', 'Unknown')
+                                results_count = search.get('relevant_results', 0)
+                                
+                                gr.Markdown(
+                                    f"**{query_text}**  \n*{timestamp}* ({results_count} results)",
+                                    container=False,
+                                )
+
+                                def create_load_search_function(search_id):
+                                    def load_func(request: gr.Request):
+                                        return load_previous_search(request, search_id)
+                                    return load_func
+
+                                gr.Button("load").click(
+                                    fn=create_load_search_function(search["search_id"]),
+                                    inputs=None,
+                                    outputs=[query, year_range, document_type, modes, agencies, relevance],
+                                )
+                
+                with gr.Column(scale=2):
                     query = gr.Textbox(label="Search Query")
                     search_button = gr.Button("Search")
                     with gr.Row():
@@ -727,12 +810,20 @@ with gr.Blocks(
 
             search_event = search_button.click(
                 perform_search, inputs=search, outputs=search_outputs
-            ).then(update_download_button, search_results_to_download, download_button)
+            ).then(update_download_button, search_results_to_download, download_button).then(
+                get_user_search_history,
+                inputs=None,
+                outputs=user_search_history,
+            )
             query.submit(
                 perform_search,
                 inputs=search,
                 outputs=search_outputs,
-            ).then(update_download_button, search_results_to_download, download_button)
+            ).then(update_download_button, search_results_to_download, download_button).then(
+                get_user_search_history,
+                inputs=None,
+                outputs=user_search_history,
+            )
     footer = get_footer()
 
 app = gr.mount_gradio_app(
