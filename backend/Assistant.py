@@ -132,7 +132,7 @@ Example function calls:
                                 },
                                 "document_type": {
                                     "type": "array",
-                                    "description": "A list of document types to filter the search results. Safety issues and recommendations are following definitions given, while report sections are reports chunked into sections/pages and summary is a dataset with a summary of the report (useful for quantitative analysis). Valid types are 'safety_issue', 'recommendation', 'report_section', 'summary'.",
+                                    "description": "A list of document types to filter the search results. Safety issues and recommendations are following definitions given, while report sections are reports chunked into sections/pages. Valid types are 'safety_issue', 'recommendation', 'report_section'.",
                                     "items": {"type": "string"},
                                 },
                                 "modes": {
