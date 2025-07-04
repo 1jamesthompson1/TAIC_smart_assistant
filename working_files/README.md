@@ -1,6 +1,6 @@
 # Working files
 
-This is a collection of notebook and scripts that are useful for development but want to keep from clogging up the root direcotry.
+This is a collection of notebook and scripts that are useful for development but want to keep from clogging up the root directory.
 
 | name | purpose | link |
 | -- | -- | -- |
