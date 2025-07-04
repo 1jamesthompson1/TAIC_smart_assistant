@@ -21,17 +21,40 @@ from datetime import datetime
 import pandas as pd
 import traceback
 
-from backend import Assistant, Searching
+from backend import Assistant, Searching, Storage, Version
 
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv(override=True)
 
+# Setup the storage connection
+print("[bold green]✓ Initializing Azure Storage connection[/bold green]")
 connection_string = f"AccountName={os.getenv('AZURE_STORAGE_ACCOUNT_NAME')};AccountKey={os.getenv('AZURE_STORAGE_ACCOUNT_KEY')};EndpointSuffix=core.windows.net"
 client = TableServiceClient.from_connection_string(conn_str=connection_string)
-chatlogs = client.create_table_if_not_exists(table_name="chatlogs")
+knowledgesearchlogs_table_name = os.getenv("KNOWLEDGE_SEARCH_LOGS_TABLE_NAME")
+conversation_metadata_table_name = os.getenv("CONVERSATION_METADATA_TABLE_NAME")
+conversation_container_name = os.getenv("CONVERSATION_CONTAINER_NAME")
+knowledge_search_container_name = os.getenv("KNOWLEDGE_SEARCH_CONTAINER_NAME", "knowledgesearchlogs")
+
+# Check all environment variables are set
+if not all([knowledgesearchlogs_table_name, conversation_metadata_table_name, conversation_container_name]):
+    missing_vars = [var for var in ["KNOWLEDGE_SEARCH_LOGS_TABLE_NAME", "CONVERSATION_METADATA_TABLE_NAME", "CONVERSATION_CONTAINER_NAME"] if not locals()[var]]
+    raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
+
+# Initialize Table Storage clients
 knowledgesearchlogs = client.create_table_if_not_exists(
-    table_name="knowledgesearchlogs"
+    table_name=knowledgesearchlogs_table_name
 )
+chatlogs = client.create_table_if_not_exists(table_name=conversation_metadata_table_name)
+
+# Initialize Blob Storage clients
+conversation_blob_store = Storage.ConversationBlobStore(connection_string, conversation_container_name)
+knowledge_search_blob_store = Storage.KnowledgeSearchBlobStore(connection_string, knowledge_search_container_name)
+
+# Initialize metadata stores
+conversation_store = Storage.ConversationMetadataStore(chatlogs, conversation_blob_store)
+knowledge_search_store = Storage.KnowledgeSearchMetadataStore(knowledgesearchlogs, knowledge_search_blob_store)
+
+print("[bold green]✓ All storage systems initialized[/bold green]")
 
 app = FastAPI()
 
@@ -137,101 +160,73 @@ def handle_submit(user_input, history=None):
 def create_or_update_conversation(request: gr.Request, conversation_id, history):
     if history == []:  # ignore instance when history is empty
         return
-    # Split messages into chunks of no more than 60kb
-    history_json = json.dumps(history)
-    MAX_LEN = 30000
-    history_chunks = []
-    while len(history_json) > MAX_LEN:
-        history_chunks.append(history_json[:MAX_LEN])
-        history_json = history_json[MAX_LEN:]
-    history_chunks.append(history_json)
-
-    messages = {
-        f"messages_{index}": history_chunk
-        for index, history_chunk in enumerate(history_chunks)
-    }
-
+    
     username = request.username
-    previous_logs = list(
-        chatlogs.query_entities(
-            f"PartitionKey eq '{username}' and RowKey eq '{conversation_id}'"
-        )
+    
+    # Generate conversation title if this is a new conversation
+    conversation_title = assistant_instance.provide_conversation_title(history)
+    
+    # Store using blob storage (JSON in blob + metadata in table)
+    success = conversation_store.create_or_update_conversation(
+        username=username,
+        conversation_id=conversation_id,
+        history=history,
+        conversation_title=conversation_title
     )
-    if len(previous_logs) == 1:
-        previous_entity = chatlogs.get_entity(
-            partition_key=username, row_key=conversation_id
-        )
-        chatlogs.update_entity(
-            entity={
-                **{
-                    "PartitionKey": username,
-                    "RowKey": conversation_id,
-                    "conversation_title": previous_entity.get("conversation_title"),
-                    "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                **messages,
-            },
-        )
-    elif len(previous_logs) == 0:
-        chatlogs.create_entity(
-            entity={
-                **messages,
-                **{
-                    "PartitionKey": username,
-                    "RowKey": conversation_id,
-                    "conversation_title": assistant_instance.provide_conversation_title(
-                        history
-                    ),
-                    "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-            }
-        )
+    
+    if success:
+        print(f"[bold green]✓ Stored conversation {conversation_id} in blob storage[/bold green]")
     else:
-        raise ValueError(
-            f"More than one conversation found, found {len(previous_logs)}"
-        )
+        print(f"[bold red]✗ Failed to store conversation {conversation_id}[/bold red]")
 
 
-def get_user_conversations(request: gr.Request):
-    converstations = chatlogs.query_entities(
-        query_filter=f"PartitionKey eq '{request.username}'"
-    )
+def get_user_conversations_metadata(request: gr.Request):
+    username = request.username
+    
+    # Get only conversation metadata (no full message history)
+    conversations = conversation_store.get_user_conversations_metadata(username)
+    print(f"[bold green]✓ Retrieved metadata for {len(conversations)} conversations[/bold green]")
+    return conversations
 
-    previous_conversations = list()
 
-    for conversation in converstations:
-        all_messages = [
-            conversation[message_key]
-            for message_key in conversation.keys()
-            if message_key.startswith("messages")
-        ]
+def load_conversation(request: gr.Request, conversation_id: str):
+    username = request.username
 
-        try:
-            messages = json.loads("".join(all_messages))
-        except json.JSONDecodeError:
-            print(
-                f"Failed to decode messages for conversation {conversation['PartitionKey']} and {conversation['RowKey']}"
-            )
-            continue
+    print(f"[orange]Loading conversation {conversation_id} for user {username}[/orange]")
+    
+    # Load the full conversation with message history
+    conversation = conversation_store.load_single_conversation(username, conversation_id)
+    if conversation:
+        # Check version compatibility
+        stored_version = conversation.get("app_version")
+        is_compatible, version_message = Version.is_compatible(stored_version or "")
+        
+        if not is_compatible:
+            print(f"[bold red]⚠ Version incompatibility for conversation {conversation_id}: {version_message}[/bold red]")
+            formatted_id = f"`{conversation['id']}`"
+            formatted_title = f"**{conversation['conversation_title']}** ⚠️ *Version Incompatible*"
+            # Return empty messages with error indication
+            error_messages = [{
+                "role": "assistant", 
+                "content": f"⚠️ **Version Compatibility Error**\n\n{version_message}\n\nThis conversation may not load correctly due to version differences. Consider creating a new conversation."
+            }] + conversation["messages"]
+            return error_messages, formatted_id, formatted_title
+        
+        if version_message:  # Minor version differences
+            print(f"[orange]⚠ Version warning for conversation {conversation_id}: {version_message}[/orange]")
+            # Add a subtle warning to the title but still load the conversation
+            formatted_title = f"**{conversation['conversation_title']}** ⚠️"
+        else:
+            formatted_title = f"**{conversation['conversation_title']}**"
+        
+        print(f"[bold green]✓ Loaded conversation {conversation_id}[/bold green]")
+        formatted_id = f"`{conversation['id']}`"
+        return conversation["messages"], formatted_id, formatted_title
+    else:
+        print(f"[bold red]✗ Failed to load conversation {conversation_id}[/bold red]")
+        return [], f"`{conversation_id}`", "*Failed to load*"
 
-        previous_conversations.append(
-            {
-                "conversation_title": conversation.get("conversation_title"),
-                "messages": messages,
-                "id": conversation.get("RowKey"),
-                "last_updated": conversation.get("last_updated"),
-            }
-        )
 
-    # Sort by last updated
-    previous_conversations = sorted(
-        previous_conversations,
-        key=lambda x: datetime.strptime(x["last_updated"], "%Y-%m-%d %H:%M:%S"),
-        reverse=True,
-    )
-
-    print(f"[bold]Found {len(previous_conversations)} user conversations[/bold]")
-    return previous_conversations
 
 
 searching_instance = Searching.Searcher(
@@ -251,6 +246,65 @@ assistant_instance = Assistant.Assistant(
 #
 # =====================================================================
 
+def get_user_search_history(request: gr.Request):
+    username = request.username
+    
+    # Get only search metadata (no full detailed data)
+    searches = knowledge_search_store.get_user_search_history(username, limit=20)
+    print(f"[bold green]✓ Retrieved metadata for {len(searches)} searches[/bold green]")
+    return searches
+
+
+def load_previous_search(request: gr.Request, search_id: str):
+    username = request.username
+
+    print(f"[orange]Loading search {search_id} for user {username}[/orange]")
+    
+    # Load the full search with detailed data
+    search_data = knowledge_search_store.load_detailed_search(username, search_id)
+    if search_data:
+        print(f"[bold green]✓ Loaded search {search_id}[/bold green]")
+        
+        # Extract search settings from detailed data
+        detailed_data = search_data['detailed_data']
+        search_settings = detailed_data.get('search_settings', {})
+        
+        # Return values to populate the search form
+        query = search_settings.get('query', '')
+        year_range = list(search_settings.get('year_range', [2007, datetime.now().year]))
+        
+        # Map document types back to UI format
+        document_type_reverse_mapping = {
+            "safety_issue": "Safety Issues",
+            "recommendation": "Safety Recommendations", 
+            "report_section": "Report sections",
+            "report_text": "Entire Reports",
+        }
+        mapped_document_types = search_settings.get('document_type', [])
+        if isinstance(mapped_document_types, list):
+            document_type = [
+                document_type_reverse_mapping.get(dt, dt) for dt in mapped_document_types
+            ]
+        else:
+            document_type = document_type_reverse_mapping.get(mapped_document_types, mapped_document_types)
+
+        mode_mapping = {
+            0: "Aviation",
+            1: "Rail",
+            2: "Maritime",
+        }
+        modes = search_settings.get('modes', [])
+        if isinstance(modes, list):
+            modes = [mode_mapping.get(mode, mode) for mode in modes]
+        else:
+            modes = [mode_mapping.get(modes, modes)]
+        agencies = search_settings.get('agencies', [])
+        relevance = search_settings.get('relevance', 0.6)
+        
+        return query, year_range, document_type, modes, agencies, relevance
+    else:
+        print(f"[bold red]✗ Failed to load search {search_id}[/bold red]")
+        return "", [2007, datetime.now().year], [], [], [], 0.6
 
 def perform_search(
     username: str,
@@ -352,64 +406,45 @@ def perform_search(
             error_trace = traceback.format_exc()
             clean_results = False
 
-    # Logging search
-    basics = {
-        "PartitionKey": username,
-        "RowKey": str(uuid.uuid4()),
-        "search_start_time": search_start_time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    search = (
-        {
-            "settings": json.dumps(search_settings),
-        }
-        if created_search
-        else {
-            "settings": None,
-        }
-    )
+    # Logging search using new knowledge search storage system
+    search_id = str(uuid.uuid4())
     
-    results_log = (
-        {
-            "results": results.head(100)
-            .drop(columns=["document"])
-            .to_json(orient="records"),
-            "relevant_results": info["relevant_results"],
-            "total_results": info["total_results"],
+    # Prepare error information if any
+    error_info = None
+    if error is not None:
+        error_info = {
+            "error": str(error),
+            "error_trace": error_trace,
+            "occurred_at": datetime.now().isoformat()
         }
-        if clean_results
-        else {
-            "results": None,
-            "relevant_results": None,
-            "total_results": None,
-        }
-    )
-
-    # Make sure that the results are not too large to be stored in the usage logs. I dont need all the items but having an idea of what documents were returned is useful.
-    if results_log["results"] is not None:
-        results_size = len(results_log["results"])
-        while results_size > 32_000:
-            print("Trimming results to fit size limit, current size:", results_size)
-            current_df = pd.read_json(results_log["results"])
-            if current_df.shape[0] > 20:
-                results_log["results"] = current_df.iloc[:-10].to_json(
-                    orient="records"
-                )
-            else:
-                results_log["results"] = current_df.iloc[:-1].to_json(
-                    orient="records"
-                )
-            results_size = len(results_log["results"])
-
-
-
-    knowledgesearchlogs.create_entity(
-        entity={
-            **basics,
-            **search,
-            **results_log,
-            "error": error_trace if error else None,
-        }
-    )
+    
+    # Prepare results information
+    results_info = {
+        "total_results": info.get("total_results", 0) if info else 0,
+        "relevant_results": info.get("relevant_results", 0) if info else 0,
+        "has_results": clean_results and results is not None,
+        "plots_generated": plots is not None,
+    }
+    
+    # Add trimmed results data for storage (if available)
+    if clean_results and results is not None:
+        # Prepare results for storage (trimmed version)
+        trimmed_results = results.head(100).drop(columns=["document"], errors='ignore')
+        results_info["sample_results"] = trimmed_results.to_dict(orient="records")
+    
+    # Store using new knowledge search storage system
+    try:
+        knowledge_search_store.store_search_log(
+            username=username,
+            search_id=search_id,
+            search_settings=search_settings or {},
+            results_info=results_info,
+            error_info=error_info
+        )
+        print(f"✓ Stored search log with ID: {search_id}")
+    except Exception as e:
+        print(f"✗ Failed to store search log: {e}")
+        # Log the error but don't fall back to old system
 
     if error is not None:
         raise gr.Error(
@@ -475,7 +510,7 @@ def update_download_button(download_dict: dict):
 
 
 def get_welcome_message(request: gr.Request):
-    return request.username, f"Data last updated: {searching_instance.last_updated}"
+    return request.username, f"Data last updated: {searching_instance.last_updated} | App version: {Version.CURRENT_VERSION}"
 
 
 def get_user_name(request: gr.Request):
@@ -530,7 +565,7 @@ with gr.Blocks(
     smart_tools.load(get_user_name, inputs=None, outputs=username)
 
     user_conversations = gr.State([])
-    smart_tools.load(get_user_conversations, inputs=None, outputs=user_conversations)
+    smart_tools.load(get_user_conversations_metadata, inputs=None, outputs=user_conversations)
 
     with gr.Row():
         gr.Markdown("# TAIC smart tools")
@@ -547,9 +582,13 @@ with gr.Blocks(
         with gr.TabItem("Assistant"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.Markdown("### Current conversation")
-                    conversation_id = gr.Markdown(str(uuid.uuid4()))
-                    gr.Markdown("### Previous conversations")
+                    gr.Markdown("## Current conversation")
+                    with gr.Group():
+                        gr.Markdown("**Conversation ID:**")
+                        conversation_id = gr.Markdown(f"`{str(uuid.uuid4())}`")
+                        gr.Markdown("**Title:**")
+                        conversation_title = gr.Markdown("*New conversation*")
+                    gr.Markdown("## Previous conversations")
 
                     @gr.render(inputs=[user_conversations])
                     def render_conversations(conversations):
@@ -560,13 +599,15 @@ with gr.Blocks(
                                     container=False,
                                 )
 
-                                def load_conversation(conversation=conversation):
-                                    return conversation["messages"], conversation["id"]
+                                def create_load_function(conv_id):
+                                    def load_func(request: gr.Request):
+                                        return load_conversation(request, conv_id)
+                                    return load_func
 
                                 gr.Button("load").click(
-                                    fn=load_conversation,
+                                    fn=create_load_function(conversation["id"]),
                                     inputs=None,
-                                    outputs=[chatbot_interface, conversation_id],
+                                    outputs=[chatbot_interface, conversation_id, conversation_title],
                                 )
 
                 with gr.Column(scale=3):
@@ -610,7 +651,7 @@ with gr.Blocks(
                 inputs=[conversation_id, chatbot_interface],
                 outputs=None,
             ).then(
-                get_user_conversations,
+                get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
             ).then(
@@ -620,12 +661,12 @@ with gr.Blocks(
             )
 
             chatbot_interface.clear(
-                lambda: (str(uuid.uuid4()), []),
+                lambda: (f"`{str(uuid.uuid4())}`", [], "*New conversation*"),
                 None,
-                [conversation_id, chatbot_interface],
+                [conversation_id, chatbot_interface, conversation_title],
                 queue=False,
             ).then(
-                get_user_conversations,
+                get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
             )
@@ -644,7 +685,7 @@ with gr.Blocks(
                 inputs=[conversation_id, chatbot_interface],
                 outputs=None,
             ).then(
-                get_user_conversations,
+                get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
             ).then(
@@ -655,8 +696,40 @@ with gr.Blocks(
 
         with gr.TabItem("Knowledge Search"):
             search_results_to_download = gr.State(None)
+            user_search_history = gr.State([])
+            smart_tools.load(get_user_search_history, inputs=None, outputs=user_search_history)
+            
             with gr.Row():
                 with gr.Column(scale=1):
+                    gr.Markdown("## Previous searches")
+
+                    @gr.render(inputs=[user_search_history])
+                    def render_search_history(search_history):
+                        for search in search_history:
+                            with gr.Row():
+                                query_text = search.get('query', 'No query')
+                                if len(query_text) > 30:
+                                    query_text = query_text[:30] + "..."
+                                timestamp = search.get('search_timestamp', 'Unknown')
+                                results_count = search.get('relevant_results', 0)
+                                
+                                gr.Markdown(
+                                    f"**{query_text}**  \n*{timestamp}* ({results_count} results)",
+                                    container=False,
+                                )
+
+                                def create_load_search_function(search_id):
+                                    def load_func(request: gr.Request):
+                                        return load_previous_search(request, search_id)
+                                    return load_func
+
+                                gr.Button("load").click(
+                                    fn=create_load_search_function(search["search_id"]),
+                                    inputs=None,
+                                    outputs=[query, year_range, document_type, modes, agencies, relevance],
+                                )
+                
+                with gr.Column(scale=2):
                     query = gr.Textbox(label="Search Query")
                     search_button = gr.Button("Search")
                     with gr.Row():
@@ -758,12 +831,20 @@ with gr.Blocks(
 
             search_event = search_button.click(
                 perform_search, inputs=search, outputs=search_outputs
-            ).then(update_download_button, search_results_to_download, download_button)
+            ).then(update_download_button, search_results_to_download, download_button).then(
+                get_user_search_history,
+                inputs=None,
+                outputs=user_search_history,
+            )
             query.submit(
                 perform_search,
                 inputs=search,
                 outputs=search_outputs,
-            ).then(update_download_button, search_results_to_download, download_button)
+            ).then(update_download_button, search_results_to_download, download_button).then(
+                get_user_search_history,
+                inputs=None,
+                outputs=user_search_history,
+            )
     footer = get_footer()
 
 app = gr.mount_gradio_app(

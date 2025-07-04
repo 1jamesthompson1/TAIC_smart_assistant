@@ -96,7 +96,7 @@ class Searcher:
         document_type: list[str],
         modes: list[str],
         agencies: list[str],
-        limit: int = 100,
+        limit: int = 150,
         relevance: float = 0,
     ):
         info = {}
