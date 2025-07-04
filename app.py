@@ -21,17 +21,31 @@ from datetime import datetime
 import pandas as pd
 import traceback
 
-from backend import Assistant, Searching
+from backend import Assistant, Searching, Storage
 
 logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv(override=True)
 
+# Setup the storage connection
+print("[bold green]✓ Initializing Azure Storage connection[/bold green]")
 connection_string = f"AccountName={os.getenv('AZURE_STORAGE_ACCOUNT_NAME')};AccountKey={os.getenv('AZURE_STORAGE_ACCOUNT_KEY')};EndpointSuffix=core.windows.net"
 client = TableServiceClient.from_connection_string(conn_str=connection_string)
-chatlogs = client.create_table_if_not_exists(table_name="chatlogs")
+knowledgesearchlogs_table_name = os.getenv("KNOWLEDGE_SEARCH_LOGS_TABLE_NAME")
+conversation_metadata_table_name = os.getenv("CONVERSATION_METADATA_TABLE_NAME")
+conversation_container_name = os.getenv("CONVERSATION_CONTAINER_NAME")
+
+# Check all environment variables are set
+if not all([knowledgesearchlogs_table_name, conversation_metadata_table_name, conversation_container_name]):
+    missing_vars = [var for var in ["KNOWLEDGE_SEARCH_LOGS_TABLE_NAME", "CONVERSATION_METADATA_TABLE_NAME", "CONVERSATION_CONTAINER_NAME"] if not locals()[var]]
+    raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
+
 knowledgesearchlogs = client.create_table_if_not_exists(
-    table_name="knowledgesearchlogs"
+    table_name=knowledgesearchlogs_table_name
 )
+chatlogs = client.create_table_if_not_exists(table_name=conversation_metadata_table_name)
+blob_store = Storage.ConversationBlobStore(connection_string, conversation_container_name)
+conversation_store = Storage.ConversationMetadataStore(chatlogs, blob_store)
+print("[bold green]✓ Blob storage conversation store initialized[/bold green]")
 
 app = FastAPI()
 
@@ -137,114 +151,33 @@ def handle_submit(user_input, history=None):
 def create_or_update_conversation(request: gr.Request, conversation_id, history):
     if history == []:  # ignore instance when history is empty
         return
-    # Split messages into chunks of no more than 60kb
-    history_json = json.dumps(history)
-    MAX_LEN = 30000
-    history_chunks = []
-    while len(history_json) > MAX_LEN:
-        # Find the closest occurrence of "</td>" or "{" from the end within the MAX_LEN limit
-        split_index = max(
-            history_json.rfind(" <td>", 0, MAX_LEN),
-            history_json.rfind(" {", 0, MAX_LEN),
-        )
-        # If neither is found, fallback to splitting at MAX_LEN
-        if split_index == -1:
-            split_index = MAX_LEN
-            print("[bold red]Warning couldn't find safe splitting point, splitting at MAX_LEN[/bold red]")
-        else:
-            split_index += 1  # Include the matched character(s) in the chunk
-
-        history_chunks.append(history_json[:split_index])
-        history_json = history_json[split_index:]
-    history_chunks.append(history_json)
-
-    messages = {
-        f"messages_{index}": history_chunk
-        for index, history_chunk in enumerate(history_chunks)
-    }
-
+    
     username = request.username
-    previous_logs = list(
-        chatlogs.query_entities(
-            f"PartitionKey eq '{username}' and RowKey eq '{conversation_id}'"
-        )
+    
+    # Generate conversation title if this is a new conversation
+    conversation_title = assistant_instance.provide_conversation_title(history)
+    
+    # Store using blob storage (JSON in blob + metadata in table)
+    success = conversation_store.create_or_update_conversation(
+        username=username,
+        conversation_id=conversation_id,
+        history=history,
+        conversation_title=conversation_title
     )
-    if len(previous_logs) == 1:
-        previous_entity = chatlogs.get_entity(
-            partition_key=username, row_key=conversation_id
-        )
-        chatlogs.update_entity(
-            entity={
-                **{
-                    "PartitionKey": username,
-                    "RowKey": conversation_id,
-                    "conversation_title": previous_entity.get("conversation_title"),
-                    "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                **messages,
-            },
-        )
-    elif len(previous_logs) == 0:
-        chatlogs.create_entity(
-            entity={
-                **messages,
-                **{
-                    "PartitionKey": username,
-                    "RowKey": conversation_id,
-                    "conversation_title": assistant_instance.provide_conversation_title(
-                        history
-                    ),
-                    "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-            }
-        )
+    
+    if success:
+        print(f"[bold green]✓ Stored conversation {conversation_id} in blob storage[/bold green]")
     else:
-        raise ValueError(
-            f"More than one conversation found, found {len(previous_logs)}"
-        )
+        print(f"[bold red]✗ Failed to store conversation {conversation_id}[/bold red]")
 
 
 def get_user_conversations(request: gr.Request):
-    converstations = chatlogs.query_entities(
-        query_filter=f"PartitionKey eq '{request.username}'"
-    )
-
-    previous_conversations = list()
-
-    for conversation in converstations:
-        all_messages = [
-            conversation[message_key]
-            for message_key in conversation.keys()
-            if message_key.startswith("messages")
-        ]
-
-        try:
-            messages = json.loads("".join(all_messages))
-        except json.JSONDecodeError as e:
-            print(
-                f"Failed to decode messages for conversation {conversation['PartitionKey']} and {conversation['RowKey']}"
-            )
-            print(f"Error: {e}")
-            continue
-
-        previous_conversations.append(
-            {
-                "conversation_title": conversation.get("conversation_title"),
-                "messages": messages,
-                "id": conversation.get("RowKey"),
-                "last_updated": conversation.get("last_updated"),
-            }
-        )
-
-    # Sort by last updated
-    previous_conversations = sorted(
-        previous_conversations,
-        key=lambda x: datetime.strptime(x["last_updated"], "%Y-%m-%d %H:%M:%S"),
-        reverse=True,
-    )
-
-    print(f"[bold]Found {len(previous_conversations)} user conversations[/bold]")
-    return previous_conversations
+    username = request.username
+    
+    # Get conversations from blob storage
+    conversations = conversation_store.get_user_conversations(username)
+    print(f"[bold green]✓ Retrieved {len(conversations)} conversations from blob storage[/bold green]")
+    return conversations
 
 
 searching_instance = Searching.Searcher(
