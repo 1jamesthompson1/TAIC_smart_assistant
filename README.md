@@ -42,11 +42,11 @@ Use GitHub Actions workflow "Auto Version Bump" with manual trigger to specify v
 1. **Install dependencies**
 
    ```bash
-   # Install Poetry if you haven't already
-   curl -sSL https://install.python-poetry.org | python3 -
-   
+   # Install uv if you haven't already
+   curl -Ls https://astral.sh/uv/install.sh | sh
+
    # Install project dependencies
-   poetry install
+   uv sync
    ```
 
 2. **Get the vector database**
