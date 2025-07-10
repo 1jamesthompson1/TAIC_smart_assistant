@@ -2,12 +2,14 @@
 FROM python:3.11-slim
 
 # Create a non-root user with a home dir
-RUN adduser --disabled-password --gecos '' appuser
+RUN addgroup --system appuser && adduser --system --group --home /home/appuser appuser
 
 # Set working dir and permissions
+RUN mkdir /app && chown appuser:appuser /app
 WORKDIR /app
-COPY . .
-RUN mkdir -p /app/uv-cache && chown -R appuser:appuser /app/uv-cache
+COPY . /app
+
+USER appuser
 
 # Install uv
 RUN pip install --no-cache-dir uv
