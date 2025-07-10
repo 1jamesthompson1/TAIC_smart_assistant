@@ -67,13 +67,14 @@ jobs:
       id: check_version
       run: |
         CURRENT_VERSION=$(uv version --short)
-        LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n1 | sed 's/^v//')
-        echo "Current version: $CURRENT_VERSION, Latest tag: $LATEST_TAG"
-        if [ "$CURRENT_VERSION" = "$LATEST_TAG" ]; then
-          echo "already_bumped=true" >> $GITHUB_OUTPUT
-        else
+        echo "Current version: $CURRENT_VERSION"
+
+        # Get list of commits in PR — including base
+        COMMITS=$(git rev-list --format=%B --no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
+
+        echo "$COMMITS" | grep -q "Bump version to $CURRENT_VERSION" && \
+          echo "already_bumped=true" >> $GITHUB_OUTPUT || \
           echo "already_bumped=false" >> $GITHUB_OUTPUT
-        fi
 
     - name: Bump version
       if: steps.check_version.outputs.already_bumped == 'false'
