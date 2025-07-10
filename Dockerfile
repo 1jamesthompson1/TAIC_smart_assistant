@@ -1,11 +1,13 @@
 # Use the official Python image from the Docker Hub
 FROM python:3.11-slim
 
-# Set the working directory in the container
-WORKDIR /app
+# Create a non-root user with a home dir
+RUN adduser --disabled-password --gecos '' appuser
 
-# Copy the pyproject.toml and uv.lock files into the container
+# Set working dir and permissions
+WORKDIR /app
 COPY . .
+RUN mkdir -p /app/uv-cache && chown -R appuser:appuser /app/uv-cache
 
 # Install uv
 RUN pip install --no-cache-dir uv
