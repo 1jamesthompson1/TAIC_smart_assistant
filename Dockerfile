@@ -2,7 +2,7 @@
 FROM python:3.11-slim
 
 # Set the working directory in the container
-WORKDIR /
+WORKDIR /app
 
 # Copy the pyproject.toml and uv.lock files into the container
 COPY . .
