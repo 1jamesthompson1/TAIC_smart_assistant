@@ -10,6 +10,10 @@ COPY . .
 # Install uv
 RUN pip install --no-cache-dir uv
 
+# Create a world-writable cache directory for uv and set it for uv
+RUN mkdir -p /app/uv-cache && chmod -R 777 /app/uv-cache
+ENV UV_CACHE_DIR=/app/uv-cache
+
 # Install the dependencies using uv
 RUN uv sync --no-dev
 
