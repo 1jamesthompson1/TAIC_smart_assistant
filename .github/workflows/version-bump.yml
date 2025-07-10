@@ -89,5 +89,5 @@ jobs:
         git add pyproject.toml
         git commit -m "Bump version to $NEW_VERSION" || exit 0
         git tag "v$NEW_VERSION"
-        git push origin HEAD
+        git push origin "HEAD:refs/heads/${{ github.head_ref }}"
         git push origin "v$NEW_VERSION"
