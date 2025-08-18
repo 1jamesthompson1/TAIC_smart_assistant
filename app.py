@@ -231,6 +231,7 @@ def load_conversation(request: gr.Request, conversation_id: str):
 
 searching_instance = Searching.Searcher(
     db_uri=os.getenv("VECTORDB_PATH"),
+    table_name=os.getenv("VECTORDB_TABLE_NAME")
 )
 
 assistant_instance = Assistant.Assistant(

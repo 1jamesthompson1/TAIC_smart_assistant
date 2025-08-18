@@ -13,42 +13,63 @@ from lancedb.embeddings.registry import register
 from lancedb.embeddings.utils import TEXT
 
 # This has to be added in manually unless https://github.com/lancedb/lancedb/issues/2518 is resol
-@register("AzureAI")
-class AzureAIEmbeddingFunction(TextEmbeddingFunction):
+@register("azure-ai-text")
+class AzureAITextEmbeddingFunction(TextEmbeddingFunction):
     """
     An embedding function that uses the AzureAI API
 
     https://learn.microsoft.com/en-us/python/api/overview/azure/ai-inference-readme?view=azure-python-preview
 
+    - AZURE_AI_ENDPOINT: The endpoint URL for the AzureAI service.
+    - AZURE_AI_API_KEY: The API key for the AzureAI service.
+
     Parameters
     ----------
     - name: str
-        The name of the model to use. This should be set to the model you want to use for embeddings.
-    - _ndims: int
-        The number of dimensions of the embeddings. This is required to create the vector column in LanceDB.
+        The name of the model you want to use from the model catalog.
 
-    Also requires the following environment variables to be set:
-    - AZURE_AI_ENDPOINT: The endpoint URL for the AzureAI service.
-    - AZURE_AI_API_KEY: The API key for the AzureAI service.
+
+    Examples
+    --------
+    import lancedb
+    import pandas as pd
+    from lancedb.pydantic import LanceModel, Vector
+    from lancedb.embeddings import get_registry
+
+    model = get_registry().get("azure-ai-text").create(name="embed-v-4-0")
+
+    class TextModel(LanceModel):
+        text: str = model.SourceField()
+        vector: Vector(model.ndims()) = model.VectorField()
+
+    df = pd.DataFrame({"text": ["hello world", "goodbye world"]})
+    db = lancedb.connect("lance_example")
+    tbl = db.create_table("test", schema=TextModel, mode="overwrite")
+
+    tbl.add(df)
+    rs = tbl.search("hello").limit(1).to_pandas()
+    #           text                                             vector  _distance
+    # 0  hello world  [-0.018188477, 0.0134887695, -0.013000488, 0.0...   0.841431
     """
 
     name: str
-    _ndims: int
     client: ClassVar = None
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        match kwargs.get("name"):
-            case "embed-v-4-0":
-                self._ndims = 1536
-            case _:
-                raise ValueError(
-                    f"Unsupported model name: {kwargs.get('name')}. "
-                    "Please use 'embed-v-4-0' or specify the number of dimensions."
-                )
-
     def ndims(self):
-        return self._ndims
+        if self.name == "embed-v-4-0":
+            return 1536
+        elif self.name == "Cohere-embed-v3-english":
+            return 1024
+        elif self.name == "Cohere-embed-v3-multilingual":
+            return 1024
+        elif self.name == "text-embedding-ada-002":
+            return 1536
+        elif self.name == "text-embedding-3-large":
+            return 3072
+        elif self.name == "text-embedding-3-small":
+            return 1536
+        else:
+            raise ValueError(f"Unknown model name: {self.name}")
 
     def compute_query_embeddings(self, query: str, *args, **kwargs) -> List[np.array]:
         return self.compute_source_embeddings(query, input_type="query")
@@ -74,48 +95,56 @@ class AzureAIEmbeddingFunction(TextEmbeddingFunction):
 
         truncation: Optional[bool]
         """
-        AzureAIEmbeddingFunction._init_client()
+        AzureAITextEmbeddingFunction._init_client()
 
         if isinstance(texts, np.ndarray):
             if texts.dtype != object:
                 raise ValueError(
-                    "AzureAIEmbeddingFunction only supports input of type `object` (i.e., list of strings) for numpy arrays."
+                    "AzureAIEmbeddingFunction only supports input of strings for numpy \
+                        arrays."
                 )
             texts = texts.tolist()
 
         # batch process so that no more than 96 texts are sent at once.
-        batch_size = 96  # Some hard coded number in the API I believe
+        batch_size = 96
         embeddings = []
         for i in range(0, len(texts), batch_size):
-            rs = AzureAIEmbeddingFunction.client.embed(
-                input=texts[i : i + batch_size], model=self.name, **kwargs
+            rs = AzureAITextEmbeddingFunction.client.embed(
+                input=texts[i : i + batch_size],
+                model=self.name,
+                dimensions=self.ndims(),
+                **kwargs,
             )
             embeddings.extend(emb.embedding for emb in rs.data)
         return embeddings
 
     @staticmethod
     def _init_client():
-        if AzureAIEmbeddingFunction.client is None:
-            if (
-                os.environ.get("AZURE_AI_ENDPOINT") is None
-                or os.environ.get("AZURE_AI_API_KEY") is None
-            ):
-                raise ValueError(
-                    "AzureAI client not initialized. Please set AZURE_AI_ENDPOINT, AZURE_AI_API_KEY, and AZURE_EMBEDDING_MODEL environment variables."
-                )
-            AzureAIEmbeddingFunction.client = EmbeddingsClient(
+        if AzureAITextEmbeddingFunction.client is None:
+            if os.environ.get("AZURE_AI_API_KEY") is None:
+                raise ValueError("AZURE_AI_API_KEY not found in environment variables")
+            if os.environ.get("AZURE_AI_ENDPOINT") is None:
+                raise ValueError("AZURE_AI_ENDPOINT not found in environment variables")
+
+            AzureAITextEmbeddingFunction.client = EmbeddingsClient(
                 endpoint=os.environ["AZURE_AI_ENDPOINT"],
                 credential=AzureKeyCredential(os.environ["AZURE_AI_API_KEY"]),
             )
             
             
 class Searcher:
-    def __init__(self, db_uri):
+    def __init__(self, db_uri, table_name):
         print("[bold]Creating searcher[/bold]")
         print(f"connecting to database at {db_uri}")
         self.vector_db = lancedb.connect(db_uri)
-        table_name = "all_document_types"
-        self.all_document_types_table = self.vector_db.open_table(table_name)
+        table_name = table_name
+        try:
+            self.all_document_types_table = self.vector_db.open_table(table_name)
+        except ValueError as e:
+            print(f"[bold red]Error opening table {table_name}[/bold red]")
+            print(f"Error: {e}")
+            print(f"Only {self.vector_db.table_names()} exist")
+            raise
 
         self.last_updated = self.all_document_types_table.list_versions()[-1][
             "timestamp"
