@@ -1,20 +1,121 @@
 from rich import print, table
-import openai
-import voyageai
 import lancedb
 import plotly.express as px
 import pandas as pd
-from typing import Optional, Union
+import numpy as np
+import os
+from typing import Optional, Union, ClassVar, List
 
+from azure.ai.inference import EmbeddingsClient
+from azure.core.credentials import AzureKeyCredential
+from lancedb.embeddings.base import TextEmbeddingFunction
+from lancedb.embeddings.registry import register
+from lancedb.embeddings.utils import TEXT
+
+# This has to be added in manually unless https://github.com/lancedb/lancedb/issues/2518 is resol
+@register("AzureAI")
+class AzureAIEmbeddingFunction(TextEmbeddingFunction):
+    """
+    An embedding function that uses the AzureAI API
+
+    https://learn.microsoft.com/en-us/python/api/overview/azure/ai-inference-readme?view=azure-python-preview
+
+    Parameters
+    ----------
+    - name: str
+        The name of the model to use. This should be set to the model you want to use for embeddings.
+    - _ndims: int
+        The number of dimensions of the embeddings. This is required to create the vector column in LanceDB.
+
+    Also requires the following environment variables to be set:
+    - AZURE_AI_ENDPOINT: The endpoint URL for the AzureAI service.
+    - AZURE_AI_API_KEY: The API key for the AzureAI service.
+    """
+
+    name: str
+    _ndims: int
+    client: ClassVar = None
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        match kwargs.get("name"):
+            case "embed-v-4-0":
+                self._ndims = 1536
+            case _:
+                raise ValueError(
+                    f"Unsupported model name: {kwargs.get('name')}. "
+                    "Please use 'embed-v-4-0' or specify the number of dimensions."
+                )
+
+    def ndims(self):
+        return self._ndims
+
+    def compute_query_embeddings(self, query: str, *args, **kwargs) -> List[np.array]:
+        return self.compute_source_embeddings(query, input_type="query")
+
+    def compute_source_embeddings(self, texts: TEXT, *args, **kwargs) -> List[np.array]:
+        texts = self.sanitize_input(texts)
+        input_type = (
+            kwargs.get("input_type") or "document"
+        )  # assume source input type if not passed by `compute_query_embeddings`
+        return self.generate_embeddings(texts, input_type=input_type)
+
+    def generate_embeddings(
+        self, texts: Union[List[str], np.ndarray], *args, **kwargs
+    ) -> List[np.array]:
+        """
+        Get the embeddings for the given texts
+
+        Parameters
+        ----------
+        texts: list[str] or np.ndarray (of str)
+            The texts to embed
+        input_type: Optional[str]
+
+        truncation: Optional[bool]
+        """
+        AzureAIEmbeddingFunction._init_client()
+
+        if isinstance(texts, np.ndarray):
+            if texts.dtype != object:
+                raise ValueError(
+                    "AzureAIEmbeddingFunction only supports input of type `object` (i.e., list of strings) for numpy arrays."
+                )
+            texts = texts.tolist()
+
+        # batch process so that no more than 96 texts are sent at once.
+        batch_size = 96  # Some hard coded number in the API I believe
+        embeddings = []
+        for i in range(0, len(texts), batch_size):
+            rs = AzureAIEmbeddingFunction.client.embed(
+                input=texts[i : i + batch_size], model=self.name, **kwargs
+            )
+            embeddings.extend(emb.embedding for emb in rs.data)
+        return embeddings
+
+    @staticmethod
+    def _init_client():
+        if AzureAIEmbeddingFunction.client is None:
+            if (
+                os.environ.get("AZURE_AI_ENDPOINT") is None
+                or os.environ.get("AZURE_AI_API_KEY") is None
+            ):
+                raise ValueError(
+                    "AzureAI client not initialized. Please set AZURE_AI_ENDPOINT, AZURE_AI_API_KEY, and AZURE_EMBEDDING_MODEL environment variables."
+                )
+            AzureAIEmbeddingFunction.client = EmbeddingsClient(
+                endpoint=os.environ["AZURE_AI_ENDPOINT"],
+                credential=AzureKeyCredential(os.environ["AZURE_AI_API_KEY"]),
+            )
+            
+            
 class Searcher:
-    def __init__(self, openai_api_key, voyageai_api_key, db_uri):
+    def __init__(self, db_uri):
         print("[bold]Creating searcher[/bold]")
         print(f"connecting to database at {db_uri}")
         self.vector_db = lancedb.connect(db_uri)
         table_name = "all_document_types"
         self.all_document_types_table = self.vector_db.open_table(table_name)
-        self.openai_client = openai.OpenAI(api_key=openai_api_key)
-        self.voyageai_client = voyageai.Client(api_key=voyageai_api_key) # type: ignore
 
         self.last_updated = self.all_document_types_table.list_versions()[-1][
             "timestamp"
@@ -113,10 +214,8 @@ class Searcher:
         if query == "" or query is None:
             final_query = None
             type = None # Fix up error with LLM not providing the right parameters
-        elif type == "fts":
+        elif type in ["fts", "vector"]:
             final_query = query
-        elif type == "vector":
-            final_query = self.embed_query(query)
         else:
             raise ValueError(f"type must be 'fts' or 'vector' not {type}")
 
@@ -188,12 +287,6 @@ class Searcher:
 
 
         return results, info, plots
-
-    def embed_query(self, query: str):
-        return self.voyageai_client.embed(
-            query, model="voyage-large-2-instruct", input_type="query", truncation=False, output_dtype="float"
-        ).embeddings[0]
-
 
 
 
