@@ -100,7 +100,7 @@ class AzureAITextEmbeddingFunction(TextEmbeddingFunction):
         if isinstance(texts, np.ndarray):
             if texts.dtype != object:
                 raise ValueError(
-                    "AzureAIEmbeddingFunction only supports input of strings for numpy \
+                    "AzureAITextEmbeddingFunction only supports input of strings for numpy \
                         arrays."
                 )
             texts = texts.tolist()
