@@ -12,7 +12,7 @@ from lancedb.embeddings.base import TextEmbeddingFunction
 from lancedb.embeddings.registry import register
 from lancedb.embeddings.utils import TEXT
 
-# This has to be added in manually unless https://github.com/lancedb/lancedb/issues/2518 is resol
+# This has to be added in manually unless https://github.com/lancedb/lancedb/issues/2518 is resolved
 @register("azure-ai-text")
 class AzureAITextEmbeddingFunction(TextEmbeddingFunction):
     """
