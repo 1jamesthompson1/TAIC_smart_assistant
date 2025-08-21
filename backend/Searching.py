@@ -137,7 +137,6 @@ class Searcher:
         print("[bold]Creating searcher[/bold]")
         print(f"connecting to database at {db_uri}")
         self.vector_db = lancedb.connect(db_uri)
-        table_name = table_name
         try:
             self.all_document_types_table = self.vector_db.open_table(table_name)
         except ValueError as e:
