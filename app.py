@@ -23,7 +23,13 @@ import traceback
 
 from backend import Assistant, Searching, Storage, Version
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
+
+# Removing excessive logging from azure sdk
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core").setLevel(logging.WARNING)
+logging.getLogger("azure.storage").setLevel(logging.WARNING)
+logging.getLogger("azure.data.tables").setLevel(logging.WARNING)
 dotenv.load_dotenv(override=True)
 
 # Setup the storage connection
@@ -235,7 +241,8 @@ searching_instance = Searching.Searcher(
 )
 
 assistant_instance = Assistant.Assistant(
-    openai_api_key=os.getenv("OPENAI_API_KEY"),
+    openai_api_key=os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
+    openai_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     searcher=searching_instance,
 )
 

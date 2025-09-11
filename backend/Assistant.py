@@ -2,13 +2,31 @@ import json
 import openai
 from datetime import datetime
 from rich import print
+from .AssistantTools import SearchTool, ReadReportTool, ReasoningTool, InternalThoughtTool
 
 
 class Assistant:
-    def __init__(self, openai_api_key, searcher):
+    def __init__(self, searcher, openai_api_key, openai_endpoint=None, reasoning_model="gpt-4o"):
         print("[bold]Creating Chatbot[/bold]")
         self.searcher = searcher
-        self.openai_client = openai.OpenAI(api_key=openai_api_key)
+        if openai_endpoint:
+            self.openai_client = openai.AzureOpenAI(
+                api_version="2024-12-01-preview",
+                api_key=openai_api_key,
+                azure_endpoint=openai_endpoint
+            )
+        else:
+            self.openai_client = openai.OpenAI(api_key=openai_api_key)
+        
+        # Initialize tools
+        self.tools = [
+            SearchTool(searcher),
+            ReadReportTool(searcher),
+            ReasoningTool(self.openai_client, reasoning_model),
+            InternalThoughtTool(self.openai_client),
+        ]
+        self.tool_map = {tool.name: tool for tool in self.tools}
+        
         print("[bold]Chatbot created[/bold]")
 
     def provide_conversation_title(self, history=[]):
@@ -39,7 +57,7 @@ class Assistant:
             "role": "system",
             "content": f"""
 You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now()}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues. Keep your responses short and to the point.
-You will be provided the conversation history and a query from the user. You can either respond directly or can call a function that searches a database of accident reports, you may only make a single function call per response.
+You will be provided the conversation history and a query from the user. You can either respond directly or can call functions to gather more information. You may make multiple function calls in sequence if needed to achieve the goal.
 For each report you should provide use the report IDs, if you reference any other document you should provide the document type and document ID.
 
 Here is some more dataset information
@@ -69,102 +87,87 @@ issues.
 """,
         }
 
-        response_stream = self.openai_client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[system_message] + history,
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search",
-                        "description": f"""Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission. This function searches a vector database.
-Example function calls:
-```json
-{{
-    "query": "What are common elements in floatation devices and fires?",
-    "type": "vector",
-    "year_range": [2020, {datetime.now().year}],
-    "document_type": ["safety_issue", "recommendation"],
-    "modes": [0, 1, 2],
-    "agencies": ["TSB", "ATSB", "TAIC"]
-}}
-```
+        messages = [system_message] + history
 
-```json
-{{
-    "query": "",
-    "type": "vector",
-    "year_range": [2020, {datetime.now().year}],
-    "document_type": ["safety_issue"],
-    "modes": [2],
-    "agencies": ["TAIC"]
-}}
-```
+        while True:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4.1",
+                messages=messages,
+                tools=[tool.to_openai_format() for tool in self.tools],
+                parallel_tool_calls=True,
+            )
 
-```json
-{{
-    "query": "Accident involves distracted operators",
-    "type": "vector",
-    "year_range": [2020, {datetime.now().year}],
-    "document_type": ["safety_issue", "recommendation", "report_section"],
-    "modes": [1],
-    "agencies": ["TAIC", "ATSB"]
-}}
-```
+            choice = response.choices[0]
+            message = choice.message
 
-""",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The query to search for. If left as an empty string it will return all results that match the other paramters.",
-                                },
-                                "type": {
-                                    "type": "string",
-                                    "enum": ["fts", "vector"],
-                                    "description": "The type of search to perform. fts should be used if the query is asking a specific question about a organisation, organisation etc. Otherwsie for more general information use vector, it will embed your query and search the vector database.",
-                                },
-                                "year_range": {
-                                    "type": "array",
-                                    "description": f"An array specifying the start and end years for filtering results. Valid range is 2000-{datetime.now().year}.",
-                                    "items": {"type": "number"},
-                                },
-                                "document_type": {
-                                    "type": "array",
-                                    "description": "A list of document types to filter the search results. Safety issues and recommendations are following definitions given, while report sections are reports chunked into sections/pages, summary are brief overviews of the reports scrapped from the agencies report webpages, they are only present for TAIC and ATSB. Valid types are 'safety_issue', 'recommendation', 'report_section' and 'summary'.",
-                                    "items": {"type": "string"},
-                                },
-                                "modes": {
-                                    "type": "array",
-                                    "description": "A list of modes to filter the search results. Valid modes are 0, 1, and 2. Which are aviation, rail, and marine respectively.",
-                                    "items": {"type": "string"},
-                                },
-                                "agencies": {
-                                    "type": "array",
-                                    "description": "A list of agencies to filter the search results. Valid agencies are TSB, ATSB, and TAIC. These are Transport Safety Board (Canada), Australian Transport Safety Board, and Transport Accident Investigation Commission (New Zealand) respectively.",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": [
-                                "query",
-                                "type",
-                                "year_range",
-                                "document_type",
-                                "modes",
-                                "agencies",
-                            ],
-                        },
-                    },
-                }
-            ],
-            parallel_tool_calls=False,
-            stream=True,
-        )
+            # If the model wants to call tools
+            if message.tool_calls:
+
+                # Append the assistant message with tool calls
+                messages.append({
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": message.tool_calls
+                })
+
+                # Execute each tool call
+                for tool_call in message.tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_args = json.loads(tool_call.function.arguments)
+                    
+                    # Add tool execution to history
+                    history.append({
+                        "role": "assistant",
+                        "content": f"Executing {tool_name} with parameters: {tool_args}",
+                        "metadata": {"title": f"🔧 Executing {tool_name}", "status": "pending"}
+                    })
+                    yield history
+                    
+                    tool = self.tool_map.get(tool_name)
+                    if not tool:
+                        result = f"Error: Unknown tool {tool_name}"
+                    else:
+                        result = tool.execute(**tool_args)
+                    
+                    history[-1]["metadata"]["status"] = "done"
+                    
+                    # Add tool result to history
+                    history.append({
+                        "role": "assistant",
+                        "content": f"Tool result from {tool_name}: {result[:500]}{'...' if len(result) > 500 else ''}",
+                        "metadata": {"title": f"📖 Result from {tool_name}", "status": "done"}
+                    })
+                    yield history
+                    
+                    # Append tool result
+                    messages.append({
+                        "role": "tool",
+                        "content": result,
+                        "tool_call_id": tool_call.id
+                    })
+                
+                # Continue the loop for more processing
+                continue
+            else:
+                # Final response, no tool calls - stream it
+                history.append({"role": "assistant", "content": ""})
+                for chunk in self.openai_client.chat.completions.create(
+                    model="gpt-4.1",
+                    messages=messages,
+                    stream=True,
+                ):
+                    if len(chunk.choices) == 0:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        history[-1]["content"] += delta.content
+                        yield history
+                return history
         function_arguments_str = ""
         function_name = ""
         tool_call_id = ""
         is_collecting_function_args = False
+        tool_calls = []
 
         history.append({"role": "assistant", "content": ""})
 
@@ -179,16 +182,13 @@ Example function calls:
 
             if delta.tool_calls:
                 is_collecting_function_args = True
-                tool_call = delta.tool_calls[0]
-
-                if tool_call.id:
-                    tool_call_id = tool_call.id
-                if tool_call.function.name:
-                    function_name = tool_call.function.name
-
-                # Process function arguments delta
-                if tool_call.function.arguments:
-                    function_arguments_str += tool_call.function.arguments
+                for tool_call_delta in delta.tool_calls:
+                    if tool_call_delta.id:
+                        tool_call_id = tool_call_delta.id
+                    if tool_call_delta.function and tool_call_delta.function.name:
+                        function_name = tool_call_delta.function.name
+                    if tool_call_delta.function and tool_call_delta.function.arguments:
+                        function_arguments_str += tool_call_delta.function.arguments
 
             # Process tool call with complete arguments
             if finish_reason == "tool_calls" and is_collecting_function_args:
@@ -204,15 +204,21 @@ Example function calls:
             raise ValueError("Assistant tried to make a function call but failed due to malformed function call")
 
         history[-1]["metadata"] = {
-            "title": "🔍 Searching database for more information",
+            "title": f"� Executing {function_name}",
             "status": "pending",
         }
         history[-1]["content"] += (
-            f"Using these parameters to search the database: {function_arguments_str}"
+            f"Executing {function_name} with parameters: {function_arguments_str}"
         )
         yield history
 
-        results, _, _ = self.searcher.knowledge_search(**function_arguments)
+        # Execute the tool
+        tool = self.tool_map.get(function_name)
+        if not tool:
+            raise ValueError(f"Unknown tool: {function_name}")
+        
+        result = tool.execute(**function_arguments)
+        
         tool_call_message = {
             "role": "assistant",
             "content": None,
@@ -236,7 +242,7 @@ Example function calls:
             + [
                 {
                     "role": "tool",
-                    "content": results.to_json(orient="records"),
+                    "content": result,
                     "tool_call_id": tool_call_id,
                 },
             ]
@@ -245,12 +251,13 @@ Example function calls:
         history.append(
             {
                 "role": "assistant",
-                "content": results.to_html(index=False),
-                "metadata": {"title": f"📖 Reading {results.shape[0]} results", 'status': 'done'},
+                "content": f"Tool result: {result[:500]}...",  # Truncate for display
+                "metadata": {"title": f"📖 Tool result from {function_name}", 'status': 'done'},
             }
         )
         yield history
 
+        # Continue with RAG response
         rag_response = self.openai_client.chat.completions.create(
             model="gpt-4.1", messages=messages, stream=True
         )
