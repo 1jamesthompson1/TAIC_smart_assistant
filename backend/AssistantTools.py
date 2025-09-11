@@ -1,4 +1,3 @@
-import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 from datetime import datetime
@@ -33,11 +32,9 @@ class Tool(ABC):
         """Convert to OpenAI tool format."""
         return {
             "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            }
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
         }
 
 class SearchTool(Tool):
@@ -101,7 +98,7 @@ class SearchTool(Tool):
     
     def execute(self, **kwargs) -> str:
         results, info, plots = self.searcher.knowledge_search(**kwargs)
-        return results.to_json(orient="records")
+        return results.to_html(index=False)
 
 class ReadReportTool(Tool):
     """Tool for reading individual reports."""
@@ -130,7 +127,7 @@ class ReadReportTool(Tool):
             "required": ["report_id"],
         }
     
-    def execute(self, report_id: str, **kwargs) -> str:
+    def execute(self, **kwargs) -> str:
         # Assuming searcher has a method to get full report
         # You may need to implement this in Searching.py
         return "Not yet implemented yet"
@@ -138,7 +135,7 @@ class ReadReportTool(Tool):
 class ReasoningTool(Tool):
     """Tool for sending information to a powerful reasoning model."""
     
-    def __init__(self, openai_client, reasoning_model: str = "gpt-4o"):
+    def __init__(self, openai_client, reasoning_model: str = "gpt-4.1"):
         self.openai_client = openai_client
         self.reasoning_model = reasoning_model
     
@@ -167,21 +164,24 @@ class ReasoningTool(Tool):
             "required": ["information", "task"],
         }
     
-    def execute(self, information: str, task: str, **kwargs) -> str:
+    def execute(self, **kwargs) -> str:
+        information = kwargs.get("information", "")
+        task = kwargs.get("task", "")
+        
         messages = [
             {"role": "system", "content": "You are a powerful reasoning AI. Analyze the provided information and perform the specified task."},
             {"role": "user", "content": f"Task: {task}\n\nInformation: {information}"}
         ]
-        response = self.openai_client.chat.completions.create(
+        response = self.openai_client.responses.create(
             model=self.reasoning_model,
-            messages=messages,
+            input=messages,
         )
-        return response.choices[0].message.content
+        return response.output_text
 
 class InternalThoughtTool(Tool):
-    """Tool for the assistant to talk to itself."""
+    """Tool for the assistant to engage in methodical thinking and planning."""
     
-    def __init__(self, openai_client, model: str = "gpt-4"):
+    def __init__(self, openai_client, model: str = "gpt-4.1"):
         self.openai_client = openai_client
         self.model = model
     
@@ -191,28 +191,49 @@ class InternalThoughtTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Generate internal thoughts for planning or reflection."
+        return "Generate methodical thoughts for observation, planning, and reflection. Use this to analyze queries, plan responses, and reflect on gathered information before taking action."
     
     @property
     def parameters(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
+                "phase": {
+                    "type": "string",
+                    "enum": ["observe", "plan", "reflect"],
+                    "description": "The phase of thinking: observe (analyze query), plan (strategy for response), reflect (review information and adjust plan)."
+                },
                 "thought": {
                     "type": "string",
-                    "description": "The internal thought or question.",
+                    "description": "The specific thought, question, or analysis for this phase.",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional context from previous observations or tool results.",
                 },
             },
-            "required": ["thought"],
+            "required": ["phase", "thought"],
         }
     
-    def execute(self, thought: str, **kwargs) -> str:
+    def execute(self, **kwargs) -> str:
+        phase = kwargs.get("phase", "reflect")
+        thought = kwargs.get("thought", "")
+        context = kwargs.get("context", "")
+        
+        phase_prompts = {
+            "observe": "You are observing and analyzing. Focus on understanding the query, identifying key elements, and determining what information is needed.",
+            "plan": "You are planning your response strategy. Consider what tools to use, in what order, and how to structure the final answer.",
+            "reflect": "You are reflecting on gathered information. Review what you've learned and decide if you have enough information or need additional data."
+        }
+        
+        prompt = phase_prompts.get(phase, "You are thinking methodically.")
+        
         messages = [
-            {"role": "system", "content": "You are thinking internally. Reflect on the thought provided."},
-            {"role": "user", "content": thought}
+            {"role": "system", "content": f"{prompt} Respond concisely with your analysis or plan."},
+            {"role": "user", "content": f"Thought: {thought}\n\nContext: {context}"}
         ]
-        response = self.openai_client.chat.completions.create(
+        response = self.openai_client.responses.create(
             model=self.model,
-            messages=messages,
+            input=messages,
         )
-        return response.choices[0].message.content
+        return response.output_text
