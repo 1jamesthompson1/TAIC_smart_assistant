@@ -128,8 +128,6 @@ class ReadReportTool(Tool):
         }
     
     def execute(self, **kwargs) -> str:
-        # Assuming searcher has a method to get full report
-        # You may need to implement this in Searching.py
         return "Not yet implemented yet"
 
 class ReasoningTool(Tool):
