@@ -2,7 +2,7 @@ import json
 import openai
 from datetime import datetime
 from rich import print
-from .AssistantTools import SearchTool, ReadReportTool, ReasoningTool, InternalThoughtTool
+from .AssistantTools import SearchTool, ReadReportTool, ReasoningTool
 
 class CompleteHistory(list):
     '''
@@ -10,17 +10,51 @@ class CompleteHistory(list):
     
     It stores all the information needed for both OpenAI and Gradio formats.
     '''
-    def add_message(self, role, content):
+    def add_message(self, role, content, metadata=None):
 
         message = {
             "role": role,
             "content": content,
         }
 
+        display_message = message.copy()
+        if metadata:
+            display_message["metadata"] = metadata
+
         self.append({
-            "display": message.copy(),
+            "display": display_message,
             "ai": message.copy(),
         })
+        
+    def start_thought(self, content=""):
+        '''
+        Start a new assistant thought message.
+        '''
+        self.append(
+            {
+                "display": {
+                    "role": "assistant",
+                    "content": content,
+                    "metadata": {
+                        "title": "🧠 Orienting and planning",
+                        "status": "pending",
+                    }
+                },
+                "ai": {
+                    "role": "assistant",
+                    "content": content,
+                },
+            }
+        )
+    
+    def end_thought(self):
+        '''
+        End the current assistant thought message.
+        '''
+        if len(self) == 0 or self[-1]["display"]["role"] != "assistant":
+            raise ValueError("No assistant message to end")
+
+        self[-1]["display"]["metadata"]["status"] = "done"
 
     def update_last_message(self, delta_content):
         '''
@@ -53,6 +87,10 @@ class CompleteHistory(list):
             }
         )
     def complete_function_call(self, output, call_id):
+        '''
+        Complete a function call by setting the previous message to done and adding the output message if provided.
+        '''
+        
         if len(self) == 0 or self[-1]["ai"].get("type") != "function_call":
             raise ValueError("No function call to complete")
 
@@ -147,8 +185,7 @@ class Assistant:
         self.tools = [
             SearchTool(searcher),
             # ReadReportTool(searcher),
-            ReasoningTool(self.openai_client, reasoning_model),
-            InternalThoughtTool(self.openai_client),
+            # ReasoningTool(self.openai_client, reasoning_model),
         ]
         self.tool_map = {tool.name: tool for tool in self.tools}
 
@@ -187,24 +224,27 @@ class Assistant:
             .message.content
         )
 
-    def process_input(self, history: CompleteHistory=[]):
-        system_message = f"""
-You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now()}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues. Keep your responses short and to the point.
+    def process_input(self, history: CompleteHistory):
+        '''
+        Process user input and generate a response.
+        
+        This is a generator that yields the updated history after each step.
+        
+        It follows the orient-plan-act loop, calling tools as needed.        
+        '''
+        general_info = f"""
+Below is general information to help you contextualise the user's query.
 
-**Follow a methodical approach for each query:**
-1. **Observe**: Analyze the user's query, identify key elements, and gather relevant information using available tools (search, read_report, reason).
-2. **Plan**: Use the internal_thought tool to reflect on what you've observed and plan your response strategy. Consider what additional information you need and how to structure your final answer.
-3. **Act**: Execute your plan by calling appropriate tools or providing the final response. If you need more information, gather it first before responding.
-
-You will be provided the conversation history and a query from the user. You can either respond directly or can call functions to gather more information. You may make multiple function calls in sequence if needed to achieve the goal.
-For each report you should provide use the report IDs, if you reference any other document you should provide the document type and document ID.
-
-Here is some more dataset information
+**Dataset Information:**
+The core of your tools are built around a vector database that contains accident reports from various transport accident investigation commissions, including:
+- New Zealand (TAIC)
+- Australia (ATSB)
+- Canada (TSB)
 There are {len(self.searcher.all_document_types_table.schema.names)} columns with {self.searcher.all_document_types_table.count_rows()} rows.
 The columns available are: {"".join(self.searcher.all_document_types_table.schema.names)}
 The data was last updated on {self.searcher.last_updated}.
 
-Here are some definitions from TAIC:
+**Key Definitions:**
 
 Safety factor - Any (non-trivial) events or conditions, which increases safety risk. If they occurred in the future, these would
 increase the likelihood of an occurrence, and/or the
@@ -223,16 +263,57 @@ either as Risk Controls or Organisational Influences.
 Safety theme - Indication of recurring circumstances or causes, either across transport modes or over time. A safety theme may
 cover a single safety issue, or two or more related safety
 issues.
-"""
+        """
 
+        orient_plan_system_message = f"""
+You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now()}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues.
+
+You will be provided the conversation history including any function calls and output you have made. You are to orient yourself to the user's query and provide a plan for how you will react to the user's query. If you need more information you should call functions to get that information. If you have enough information to respond to the user, you should provide a short guideline for how you will respond to the user (you will be acting on this plan momentarily).
+
+{general_info}
+        """
+
+        act_system_message = f"""
+You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now()}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues. Keep your responses short and to the point.
+
+You will be provided the conversation history including the plan you have made.
+You are to act on your plan, this may involve calling functions to get more information or providing a response for the user.
+
+If you choose to respond to the user, ensure you provide a concise and accurate answer based on the information available. If you reference any reports, ensure you provide the report IDs. If you reference any other document you should provide the document type and document ID.
+
+{general_info}
+        """
 
         if not isinstance(history, CompleteHistory):
             raise ValueError("history must be a CompleteHistory instance")
+        if len(history) == 0:
+            raise ValueError("history is empty")
+
+        print(f"[bold]Processing user input {history[-1]['display']['content']}[/bold]")
 
         while True:
+            orient_plan_response = self.openai_client.responses.create(
+                model="gpt-4.1",
+                instructions=orient_plan_system_message,
+                input=history.openai_format(),
+                tools=[tool.to_openai_format() for tool in self.tools],
+                store=False,
+                stream=True,
+                tool_choice="none",
+            )
+
+            history.start_thought()
+            for chunk in orient_plan_response:
+                if chunk.type == 'response.output_text.delta':
+                    history.update_last_message(chunk.delta)
+                    yield history, history.gradio_format()
+    
+            history.end_thought()
+            yield history, history.gradio_format()
+            
             response = self.openai_client.responses.create(
                 model="gpt-4.1",
-                instructions=system_message,
+                instructions=act_system_message,
                 input=history.openai_format(),
                 tools=[tool.to_openai_format() for tool in self.tools],
                 parallel_tool_calls=True,
@@ -240,14 +321,12 @@ issues.
                 stream=True,
             )
 
-            print("[bold]Assistant response received, processing...[/bold]")
 
             function_calls = {}
             for chunk in response:
                 # Prepare to collect either function calls or text deltas
                 if chunk.type == 'response.output_item.added':
                     if chunk.item.type == "function_call":
-                        print(f"Function call: {chunk.item.name} {chunk.item.arguments}")
                         function_calls[chunk.output_index] = chunk.item
                     elif chunk.item.type == "message":
                         history.add_message("assistant", "")
