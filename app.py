@@ -678,7 +678,7 @@ with gr.Blocks(
             )
 
             chatbot_interface.clear(
-                lambda: (f"`{str(uuid.uuid4())}`", [], [], "*New conversation*"),
+                lambda: (f"`{str(uuid.uuid4())}`", [], Assistant.CompleteHistory([]), "*New conversation*"),
                 None,
                 [conversation_id, chatbot_interface, current_conversation, conversation_title],
                 queue=False,
