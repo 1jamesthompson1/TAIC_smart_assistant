@@ -678,9 +678,9 @@ with gr.Blocks(
             )
 
             chatbot_interface.clear(
-                lambda: (f"`{str(uuid.uuid4())}`", [], "*New conversation*"),
+                lambda: (f"`{str(uuid.uuid4())}`", [], [], "*New conversation*"),
                 None,
-                [conversation_id, chatbot_interface, conversation_title],
+                [conversation_id, chatbot_interface, current_conversation, conversation_title],
                 queue=False,
             ).then(
                 get_user_conversations_metadata,
