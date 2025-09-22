@@ -168,6 +168,10 @@ def handle_submit(user_input, history: Assistant.CompleteHistory = None):
 def create_or_update_conversation(request: gr.Request, conversation_id, history: Assistant.CompleteHistory):
     if history == []:  # ignore instance when history is empty
         return
+
+    if os.getenv("NO_LOGS", "false").lower() == "true":
+        print("[orange]⚠ NO_LOGS is set to true, skipping storing conversation[/orange]")
+        return
     
     username = request.username
     

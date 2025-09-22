@@ -49,7 +49,14 @@ class SearchTool(Tool):
     
     @property
     def description(self) -> str:
-        return """Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission. This function searches a vector database."""
+        return """Search for safety issues and recommendations from the New Zealand Transport Accident Investigation Commission. This function searches a vector database.
+        Example usage:
+        search(query="What are the common causes of aviation accidents?", type="vector", year_range=[2010, 2023], document_type=["safety_issue", "recommendation"], modes=["0"], agencies=["TAIC"])
+
+        search(query="What safety issues are associated with runway incursions?", type="vector", year_range=[2000, 2023], document_type=["safety_issue", "recommendations"], modes=["0"], agencies=["TAIC", "ATSB"])
+
+        search(query="What are some recent accidents?", type="vector", year_range=[2000, 2023], document_type=["summary"], modes=["0", "1", "2"], agencies=["ATSB", "TSB", "TAIC"])
+    """
     
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -72,7 +79,7 @@ class SearchTool(Tool):
                 },
                 "document_type": {
                     "type": "array",
-                    "description": "A list of document types to filter the search results. Safety issues and recommendations follow definitions given, while report sections are reports chunked into sections/pages, summary are brief overviews of the reports scrapped from the agencies report webpages, they are only present for TAIC and ATSB. Valid types are 'safety_issue', 'recommendation', 'report_section' and 'summary'.",
+                    "description": "A list of document types to filter the search results. Safety issues and recommendations follow definitions given, while report sections are reports chunked into sections/pages, summary are brief overviews of the reports scrapped from the agencies report webpages only available for TAIC and ATSB. Valid types are 'safety_issue', 'recommendation', 'section' and 'summary'.",
                     "items": {"type": "string"},
                 },
                 "modes": {
@@ -98,7 +105,11 @@ class SearchTool(Tool):
     
     def execute(self, **kwargs) -> str:
         results, info, plots = self.searcher.knowledge_search(**kwargs)
-        return results.to_html(index=False)
+        
+        results_html = results.to_html(index=False)
+
+        final_message = f"<p>Information about the search:<br>{info}<br>Search Results:<br></p>{results_html}"
+        return final_message
 
 class ReadReportTool(Tool):
     """Tool for reading individual reports."""
