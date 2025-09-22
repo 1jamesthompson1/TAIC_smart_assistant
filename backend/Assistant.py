@@ -10,6 +10,76 @@ class CompleteHistory(list):
     
     It stores all the information needed for both OpenAI and Gradio formats.
     '''
+    def __init__(self, *args):
+        super().__init__(*args)
+        
+        if len(args) != 1:
+            raise ValueError("CompleteHistory must be initialized with a single iterable argument")
+
+        if not isinstance(args[0], list):
+            raise ValueError("CompleteHistory must be initialized with a list")
+
+        try:
+            self.format_check()
+        except ValueError as e:
+            print(f"[red]Warning: History format issue on init: {e}[/red]")
+            self.format()
+
+    def format(self):
+        '''
+        Pre to 0.3.0 the message was justa  list of dict with "role", "content" and optional "metadata".
+        Need to expand this out into the full format with "display" and "ai" keys. TO do this just copy the message to both and only have role and content for the ai key.
+        '''
+        new_history = []
+        
+        new_history = [
+            {
+                "display": curr,
+                "ai": {
+                    "role": curr["role"],
+                    "content": curr["content"],
+                },
+            }
+            for curr in self
+        ]
+        
+        self.clear()
+        self.extend(new_history)
+
+    def format_check(self):
+        '''
+        Check that the history is in the correct format.
+        Each message must be a dict with "display" and "ai" keys.
+        The "display" key must have "role" and "content".
+        The "ai" key must have either "role" and "content" or "type", "output", "call_id".
+        '''
+        for i, msg in enumerate(self):
+            # Check roughly in the right format
+            if not isinstance(msg, dict):
+                raise ValueError(f"Message {i} is not a dict")
+            if "display" not in msg or "ai" not in msg:
+                raise ValueError(f"Message {i} must have 'display' and 'ai' keys")
+            display = msg["display"]
+            ai = msg["ai"]
+
+            # Check display format
+            if not isinstance(display, dict):
+                raise ValueError(f"Message {i} 'display' must be a dict, got {type(display)}")
+            if "role" not in display or "content" not in display:
+                raise ValueError(f"Message {i} 'display' must have 'role' and 'content', got {display.keys()}")
+            
+            # Check ai format
+            if not isinstance(ai, dict):
+                raise ValueError(f"Message {i} 'ai' must be a dict, got {type(ai)}")
+            if ("role" in ai and "content" in ai): # chat messsage
+                continue
+            elif "type" in ai and "output" in ai and "call_id" in ai: # Function call output
+                continue
+            elif "type" in ai and "name" in ai and "arguments" in ai: # Function call
+                continue
+            else:
+                raise ValueError(f"Message {i} 'ai' must be either function call, message or function output, got {ai.keys()}")
+    
     def add_message(self, role, content, metadata=None):
 
         message = {
