@@ -11,12 +11,10 @@ from gradio_rangeslider import RangeSlider
 import dotenv
 import os
 import tempfile
-from openpyxl import Workbook
 import uvicorn
 from rich import print
 import logging
 from azure.data.tables import TableServiceClient
-import json
 from datetime import datetime
 import pandas as pd
 import traceback
@@ -25,7 +23,7 @@ from backend import Assistant, Searching, Storage, Version
 
 logging.basicConfig(level=logging.WARNING)
 
-logging.getLogger("uvicorn.process").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 # Removing excessive logging from azure sdk
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
@@ -165,19 +163,25 @@ def handle_submit(user_input, history: Assistant.CompleteHistory = None):
     return gr.Textbox(interactive=False, value=None), history, history.gradio_format()
 
 
-def create_or_update_conversation(request: gr.Request, conversation_id, history: Assistant.CompleteHistory):
+def create_or_update_conversation(request: gr.Request, conversation_id, conversation_title, history: Assistant.CompleteHistory):
     if history == []:  # ignore instance when history is empty
         return
 
-    if os.getenv("NO_LOGS", "false").lower() == "true":
-        print("[orange]⚠ NO_LOGS is set to true, skipping storing conversation[/orange]")
-        return
     
     username = request.username
+
     
-    # Generate conversation title if this is a new conversation
-    conversation_title = assistant_instance.provide_conversation_title(history)
+    # Generate conversation title only every 3rd after the first message that 
+    # the user sends
+    if len(
+        [msg for msg in history.gradio_format() if msg['role'] == 'user']
+        ) % 3 == 1:
+        conversation_title = assistant_instance.provide_conversation_title(history)
     
+    if os.getenv("NO_LOGS", "false").lower() == "true":
+        print("[orange]⚠ NO_LOGS is set to true, skipping storing conversation[/orange]")
+        return conversation_title
+
     # Store using blob storage (JSON in blob + metadata in table)
     success = conversation_store.create_or_update_conversation(
         username=username,
@@ -188,6 +192,8 @@ def create_or_update_conversation(request: gr.Request, conversation_id, history:
     
     if not success:
         print(f"[bold red]✗ Failed to store conversation {conversation_id}[/bold red]")
+
+    return conversation_title
 
 
 def get_user_conversations_metadata(request: gr.Request):
@@ -665,8 +671,8 @@ with gr.Blocks(
                 outputs=[current_conversation, chatbot_interface],
             ).then(
                 create_or_update_conversation,
-                inputs=[conversation_id, current_conversation],
-                outputs=None,
+                inputs=[conversation_id, conversation_title, current_conversation],
+                outputs=conversation_title,
             ).then(
                 get_user_conversations_metadata,
                 inputs=None,
@@ -699,8 +705,8 @@ with gr.Blocks(
                 outputs=[current_conversation, chatbot_interface],
             ).then(
                 create_or_update_conversation,
-                inputs=[conversation_id, current_conversation],
-                outputs=None,
+                inputs=[conversation_id, conversation_title, current_conversation],
+                outputs=conversation_title,
             ).then(
                 get_user_conversations_metadata,
                 inputs=None,
