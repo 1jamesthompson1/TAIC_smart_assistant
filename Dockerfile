@@ -47,7 +47,7 @@ COPY startup.sh /app/startup.sh
 RUN chmod +x /app/startup.sh
 
 # Expose the port that the app runs on
-EXPOSE 7860
+EXPOSE 8080
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
