@@ -10,7 +10,7 @@
 
 ## Preview
 
-![TAIC Smart Assistant Demo](https://github.com/1jamesthompson1/TAIC_smart_assistant/releases/download/v0.3.0/demo.gif)
+![TAIC Smart Assistant Demo](https://github.com/1jamesthompson1/TAIC_smart_assistant/releases/download/v0.4.0/demo.gif)
 
 ---
 
