@@ -29,4 +29,5 @@ fi
 echo "Starting the application..."
 
 # Start the FastAPI application
-exec uvicorn app:app --host 0.0.0.0 --port 8080
+# Use PORT environment variable, default to 8080 if not set
+exec uvicorn app:app --host 0.0.0.0 --port ${PORT}
