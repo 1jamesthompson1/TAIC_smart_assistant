@@ -1,5 +1,5 @@
 
-# 🚁 TAIC Smart Assistant
+# TAIC Smart Assistant
 
 > An intelligent assistant and knowledge search tool for the New Zealand Transport Accident Investigation Commission
 
@@ -8,13 +8,13 @@
 
 ---
 
-## 📸 Preview
+## Preview
 
 ![TAIC Smart Assistant Demo](https://github.com/1jamesthompson1/TAIC_smart_assistant/releases/download/v0.3.0/demo.gif)
 
 ---
 
-## ✨ Features
+## Features
 
 🤖 **AI-Powered Assistant**
 - Interactive chat interface with conversational AI
@@ -28,11 +28,13 @@
 
 ---
 
-## 📋 Project Status
+## Project Status
 
 This chat interface has proven to be significantly more user-friendly than other methods. This means that as many tools will be built behind the chat interface.
 
 As of October 2025 this app is going into organisation wide deployment. There is no public access at the moment.
+
+The app implementation is completely seperate from the code base, however a new deployment would still require some admin and setup to get running.
 
 ## Contributing
 
