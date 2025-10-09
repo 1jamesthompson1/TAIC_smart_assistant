@@ -26,7 +26,8 @@ else
     echo "Vector database download completed!"
 fi
 
-echo "Starting the application..."
+echo "Starting the application on port '${PORT}'..."
+
 
 # Start the FastAPI application
 # Use PORT environment variable, default to 8080 if not set
