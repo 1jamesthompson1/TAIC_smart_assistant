@@ -1,0 +1,49 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Download test environment file
+      run: |
+        az storage blob download \
+          --account-name ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }} \
+          --container-name configs \
+          --name test.env \
+          --file .env \
+          --auth-mode login
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run tests with coverage
+      run: uv run pytest tests/ -v --cov=backend --cov-report=term-missing
+
+    - name: Run integration tests with real services
+      run: TEST_USE_REAL_SERVICES=true uv run pytest tests/ -v -k "real" --tb=short
+      continue-on-error: true

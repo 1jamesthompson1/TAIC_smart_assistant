@@ -28,10 +28,23 @@ dependencies = [
 dev = [
     "ipykernel>=6.29.5,<7",
     "notebook>=7.4.4,<8",
+    "pytest>=8.0.0,<9",
+    "pytest-cov>=6.0.0,<7",
+    "pytest-mock>=3.14.0,<4",
+    "pytest-asyncio>=0.24.0,<0.25",
 ]
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-v",
+    "--cov=backend",
+    "--cov-report=term-missing"
+]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["hatchling"]

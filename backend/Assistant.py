@@ -32,16 +32,20 @@ class CompleteHistory(list):
         '''
         new_history = []
         
-        new_history = [
-            {
-                "display": curr,
-                "ai": {
-                    "role": curr["role"],
-                    "content": curr["content"],
-                },
-            }
-            for curr in self
-        ]
+        try:
+            new_history = [
+                {
+                    "display": curr,
+                    "ai": {
+                        "role": curr["role"],
+                        "content": curr["content"],
+                    },
+                }
+                for curr in self
+            ]
+        except Exception as e:
+            raise ValueError(f"Failed to format history: {e}")
+
         
         self.clear()
         self.extend(new_history)

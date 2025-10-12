@@ -222,11 +222,19 @@ def load_conversation(request: gr.Request, conversation_id: str):
             formatted_id = f"`{conversation['id']}`"
             formatted_title = f"**{conversation['conversation_title']}** ⚠️ *Version Incompatible*"
             # Return empty messages with error indication
-            error_messages = [{
-                "role": "assistant", 
-                "content": f"⚠️ **Version Compatibility Error**\n\n{version_message}\n\nThis conversation may not load correctly due to version differences. Consider creating a new conversation."
-            }] + conversation["messages"]
-            return error_messages, formatted_id, formatted_title
+            error_message = {
+                "display": {
+                    "role": "assistant", 
+                    "content": f"⚠️ **Version Compatibility Error**\n\n{version_message}\n\nThis conversation may not load correctly due to version differences. Consider creating a new conversation."
+                },
+                "ai": {
+                    "role": "assistant",
+                    "content": f"⚠️ **Version Compatibility Error**\n\n{version_message}\n\nThis conversation may not load correctly due to version differences. Consider creating a new conversation."
+                }
+            }
+            error_messages = [error_message] + conversation["messages"]
+            history = Assistant.CompleteHistory(error_messages)
+            return history, history.gradio_format(), formatted_id, formatted_title
         
         if version_message:  # Minor version differences
             print(f"[orange]⚠ Version warning for conversation {conversation_id}: {version_message}[/orange]")
@@ -874,7 +882,7 @@ with gr.Blocks(
     footer = get_footer()
 
 app = gr.mount_gradio_app(
-    app, smart_tools, path="/tools", auth_dependency=get_user, show_api=False
+    app, smart_tools, path="/tools", auth_dependency=lambda request: get_user(request), show_api=False
 )
 
 
