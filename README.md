@@ -49,13 +49,19 @@ _Note that this has only ever been 'completed' on Linux machines. For ease of us
 curl -Ls https://astral.sh/uv/install.sh | sh
 
 # Install project dependencies
-uv sync
+uv sync --dev
+
+# Setup pre-commits
+uv run pre-commit install
 ```
 
 2. **Get the vector database**
+*This is simply so that when you want to test the webapp you can use the searcher quickly as it is locally fetching data.*
 
 Install `azcopy` by following: https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10?tabs=apt
 Install `az cli` by following: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest
+
+You will then need to login with `az login`.
 
 ```bash
 # Download and setup the vector database

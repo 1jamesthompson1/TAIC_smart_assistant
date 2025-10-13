@@ -1,26 +1,37 @@
-import pytest
 import os
+import uuid
+from unittest.mock import Mock, patch
+
 import pandas as pd
-from unittest.mock import patch, Mock, AsyncMock
-from starlette.responses import RedirectResponse
+import pytest
+
+from app import (
+    assistant_instance,
+    create_or_update_conversation,
+    get_user_conversations_metadata,
+    load_conversation,
+    perform_search,
+)
+from backend.Assistant import CompleteHistory
 
 
 class TestAppSmoke:
+    SUCCESS_STATUS = 200
     """Smoke tests for the web application."""
 
     def test_app_imports_without_error(self):
         """Test that the app module can be imported without errors."""
         try:
-            import app
-            assert app.app is not None
-        except Exception as e:
-            pytest.fail(f"Failed to import app: {e}")
+            import app  # noqa: PLC0415
 
+            assert app.app is not None
+        except Exception as e:  # noqa: BLE001
+            pytest.fail(f"Failed to import app: {e}")
 
     def test_login_page_loads(self, client):
         """Test that login page loads successfully."""
         response = client.get("/login-page")
-        assert response.status_code == 200
+        assert response.status_code == self.SUCCESS_STATUS
         assert "TAIC smart tools" in response.text
 
     def test_root_redirect_without_auth(self, client):
@@ -35,45 +46,61 @@ class TestAppSmoke:
 
     def test_tool_with_auth(self, client):
         """Test that /tools path loads when authenticated."""
-        with patch('app.get_user') as mock_get_user:
+        with patch("app.get_user") as mock_get_user:
             mock_get_user.return_value = "testuser"
             response = client.get("/tools")
-            # assert response.status_code == 200
-            
+
             assert "Assistant" in response.text
 
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
     def test_real_app_startup(self, client):
         """Test that the real app starts up with all services initialized."""
         # Test that we can access the login page
         response = client.get("/login-page")
-        assert response.status_code == 200
+        assert response.status_code == self.SUCCESS_STATUS
         assert "TAIC smart tools" in response.text
 
+
 class TestToolsFunctions:
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
-    def test_real_assistant_integration(self, client):
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_real_assistant_integration(self):
         """Test that the assistant is properly integrated."""
-        from app import assistant_instance
 
         assert assistant_instance is not None
         assert assistant_instance.searcher is not None
         assert len(assistant_instance.tools) > 0
 
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
-    def test_perform_search_functionality(self, client):
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_perform_search_functionality(self):
         """Test the perform_search function with real services."""
-        from app import perform_search
 
         # Test search execution
-        results, download_dict, message, doc_plot, mode_plot, year_hist, agency_plot, event_plot = perform_search(
+        (
+            results,
+            download_dict,
+            message,
+            _doc_plot,
+            _mode_plot,
+            _year_hist,
+            _agency_plot,
+            _event_plot,
+        ) = perform_search(
             username="testuser",
             query="safety factor",
             year_range=[2010, 2024],
             document_type=["Safety issues"],
             modes=["Aviation", "Rail", "Maritime"],
             agencies=["TAIC"],
-            relevance=0.6
+            relevance=0.6,
         )
 
         assert isinstance(results, pd.DataFrame)
@@ -82,32 +109,46 @@ class TestToolsFunctions:
         assert "settings" in download_dict
         assert "results" in download_dict
 
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
-    def test_perform_search_with_empty_query(self, client):
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_perform_search_with_empty_query(self):
         """Test perform_search with empty query."""
-        from app import perform_search
 
-        results, download_dict, message, doc_plot, mode_plot, year_hist, agency_plot, event_plot = perform_search(
+        (
+            results,
+            _download_dict,
+            message,
+            _doc_plot,
+            _mode_plot,
+            _year_hist,
+            _agency_plot,
+            _event_plot,
+        ) = perform_search(
             username="testuser",
             query="",
             year_range=[2010, 2024],
             document_type=["Safety issues"],
             modes=["Aviation"],
             agencies=["TAIC"],
-            relevance=0.6
+            relevance=0.6,
         )
 
         # Should handle empty query gracefully
         assert isinstance(results, pd.DataFrame)
         assert isinstance(message, str)
+
+
 class TestConversationFunctions:
     """Tests for conversation-related functions in the app."""
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
-    def test_conversation_functions(self, client):
+
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_conversation_functions(self):
         """Test conversation-related functions."""
-        from app import get_user_conversations_metadata, create_or_update_conversation
-        from backend.Assistant import CompleteHistory
-        import uuid
 
         # Test getting user conversations (should work even with no conversations)
         conversations = get_user_conversations_metadata(Mock(username="testuser"))
@@ -115,7 +156,7 @@ class TestConversationFunctions:
         assert len(conversations) >= 0
 
         # Test creating/updating conversation
-        conversation_id = str(uuid.uuid4())
+        str(uuid.uuid4())
         history = CompleteHistory([])
         history.add_message("user", "Test message")
         history.add_message("assistant", "Test response")
@@ -123,33 +164,38 @@ class TestConversationFunctions:
         # This would require authentication context, so we'll just test the function exists
         assert callable(create_or_update_conversation)
 
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
-    def test_load_nonexistent_conversation_function(self, client):
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_load_nonexistent_conversation_function(self):
         """Test loading conversations."""
-        from app import load_conversation
-        import uuid
 
         # Test loading non-existent conversation
         conversation_id = str(uuid.uuid4())
-        result = load_conversation(Mock(username="testuser"), conversation_id)
+        history, gradio_format, conv_id, title = load_conversation(
+            Mock(username="testuser"),
+            conversation_id,
+        )
 
-        # Should return empty history for non-existent conversation
-        assert len(result) == 4  # history, gradio_format, id, title
+        assert len(history) == 0
+        assert gradio_format == []
+        assert conv_id == conversation_id
+        assert title == "*Failed to load*"
 
-    @pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
-    def test_load_conversation_function(self, client):
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_load_conversation_function(self):
         """Test loading conversations a real conversation."""
-        from app import load_conversation
-        import uuid
-
         conversation_id = "1f6ebb26-abc4-4d7f-ab0b-da07c34ca73e"
 
-        result = load_conversation(Mock(username="testuser"), conversation_id)
+        history, _gradio_format, _conv_id, _title = load_conversation(
+            Mock(username="testuser"),
+            conversation_id,
+        )
 
-        # Should return the correct history for the existing conversation
-        assert len(result) == 4  # history, gradio_format, id, title
-
-        history = result[0]
         assert isinstance(history, list)
 
         assert len(history) > 0

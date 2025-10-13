@@ -1,25 +1,28 @@
-import pytest
 import os
-import pandas as pd
 from unittest.mock import Mock, patch
+
+import pytest
+
 from backend.Assistant import Assistant, CompleteHistory
 
 
-def test_assistant_initialization(mock_openai, mock_searcher):
+def test_assistant_initialization(mock_searcher):
     """Test that Assistant can be initialized."""
     assistant = Assistant(
         openai_api_key="test",
         openai_endpoint="https://test.openai.azure.com/",
-        searcher=mock_searcher
+        searcher=mock_searcher,
     )
     assert assistant.openai_client is not None
     assert assistant.searcher == mock_searcher
     assert len(assistant.tools) > 0  # Should have tools
 
+
 def test_complete_history_initialization():
     """Test CompleteHistory initialization."""
     history = CompleteHistory([])
     assert len(history) == 0
+
 
 def test_complete_history_add_message():
     """Test adding messages to CompleteHistory."""
@@ -32,6 +35,7 @@ def test_complete_history_add_message():
     assert history[0]["ai"]["role"] == "user"
     assert history[0]["ai"]["content"] == "Hello"
 
+
 def test_complete_history_gradio_format():
     """Test gradio format conversion."""
     history = CompleteHistory([])
@@ -39,27 +43,32 @@ def test_complete_history_gradio_format():
     history.add_message("assistant", "Hi there")
 
     gradio_format = history.gradio_format()
-    assert len(gradio_format) == 2
+    expected_message_len = 2
+    assert len(gradio_format) == expected_message_len
     assert gradio_format[0]["role"] == "user"
     assert gradio_format[0]["content"] == "Hello"
     assert gradio_format[1]["role"] == "assistant"
     assert gradio_format[1]["content"] == "Hi there"
 
-@patch('backend.Assistant.Assistant.process_input')
+
+@patch("backend.Assistant.Assistant.process_input")
 def test_basic_conversation_flow(mock_process, mock_assistant):
     """Test basic conversation processing."""
     history = CompleteHistory([])
     history.add_message("user", "What is a safety factor?")
 
     # Mock the process_input to return a simple response
-    mock_process.return_value = iter([
-        (history, history.gradio_format())
-    ])
+    mock_process.return_value = iter(
+        [
+            (history, history.gradio_format()),
+        ],
+    )
 
     # This would normally be called in the Gradio interface
     # For testing, we just verify the method exists and can be called
-    assert hasattr(mock_assistant, 'process_input')
+    assert hasattr(mock_assistant, "process_input")
     assert callable(mock_assistant.process_input)
+
 
 def test_conversation_title_generation(mock_assistant):
     """Test conversation title generation."""
@@ -68,7 +77,7 @@ def test_conversation_title_generation(mock_assistant):
     history.add_message("assistant", "Aviation safety is...")
 
     # Mock OpenAI response for title generation
-    with patch.object(mock_assistant.openai_client, 'chat') as mock_chat:
+    with patch.object(mock_assistant.openai_client, "chat") as mock_chat:
         mock_response = Mock()
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "Aviation Safety Discussion"
@@ -78,21 +87,23 @@ def test_conversation_title_generation(mock_assistant):
         assert isinstance(title, str)
         assert len(title) > 0
 
+
 def test_history_format_validation():
     """Test that history format validation works."""
     # Valid format
     valid_history = [
         {
             "display": {"role": "user", "content": "Hello"},
-            "ai": {"role": "user", "content": "Hello"}
-        }
+            "ai": {"role": "user", "content": "Hello"},
+        },
     ]
     history = CompleteHistory(valid_history)
     assert len(history) == 1
 
     # Invalid format should raise error
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Failed to format"):
         CompleteHistory([{"invalid": "format"}])
+
 
 def test_empty_history_processing_error(mock_assistant):
     """Test that processing empty history raises error."""
@@ -101,14 +112,22 @@ def test_empty_history_processing_error(mock_assistant):
     with pytest.raises(ValueError, match="history is empty"):
         list(mock_assistant.process_input(history))
 
-@pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_USE_REAL_SERVICES"),
+    reason="Requires real services",
+)
 def test_real_assistant_initialization(mock_assistant):
     """Test that real Assistant initializes with actual dependencies."""
     assert mock_assistant.openai_client is not None
     assert mock_assistant.searcher is not None
     assert len(mock_assistant.tools) > 0
 
-@pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_USE_REAL_SERVICES"),
+    reason="Requires real services",
+)
 def test_real_conversation_processing(mock_assistant):
     """Test actual conversation processing with real AI."""
     history = CompleteHistory([])
@@ -122,7 +141,11 @@ def test_real_conversation_processing(mock_assistant):
     assert len(final_history) > 1  # Should have user message + assistant response
     assert len(gradio_format) > 1
 
-@pytest.mark.skipif(not os.getenv("TEST_USE_REAL_SERVICES"), reason="Requires real services")
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_USE_REAL_SERVICES"),
+    reason="Requires real services",
+)
 def test_real_title_generation(mock_assistant):
     """Test actual conversation title generation."""
     history = CompleteHistory([])
@@ -133,4 +156,3 @@ def test_real_title_generation(mock_assistant):
     assert isinstance(title, str)
     assert len(title) > 0
     assert "runway" in title.lower() or "safety" in title.lower()
-
