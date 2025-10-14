@@ -2,9 +2,9 @@ name: Test Suite
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -41,9 +41,8 @@ jobs:
     - name: Install dependencies
       run: uv sync --dev
 
-    - name: Run tests with coverage
+    - name: Run unit tests with mocks
       run: uv run pytest tests/ -v --cov=backend --cov-report=term-missing
 
     - name: Run integration tests with real services
-      run: TEST_USE_REAL_SERVICES=true uv run pytest tests/ -v -k "real" --tb=short
-      continue-on-error: true
+      run: TEST_USE_REAL_SERVICES=true uv run pytest tests/ -v --tb=short
