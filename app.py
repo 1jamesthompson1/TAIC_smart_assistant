@@ -397,52 +397,102 @@ def load_previous_search(request: gr.Request, search_id: str):
     return "", [2007, datetime.now(tz=timezone.utc).year], [], [], [], 0.6
 
 
-def create_complete_search_params(partial_params: Searching.SearchParams):
+def create_complete_search_params(
+    query: str,
+    year_range: list,
+    document_type: list,
+    modes: list,
+    agencies: list,
+):
     """
     Create complete SearchParams by filling in defaults for any missing fields.
     """
-    error = None
-    try:
-        search_type = (
-            "none"
-            if (partial_params.query == "" or partial_params.query is None)
-            else (
-                "fts"
-                if partial_params.query[0] == '"' and partial_params.query[-1] == '"'
-                else "vector"
-            )
-        )
-        if search_type == "fts":
-            partial_params = partial_params._replace(query=partial_params.query[1:-1])
+    search_type = (
+        "none"
+        if (query == "" or query is None)
+        else ("fts" if query[0] == '"' and query[-1] == '"' else "vector")
+    )
+    if search_type == "fts":
+        query = query[1:-1]  # Remove quotes for exact match search
 
-        document_type_mapping = {
-            "Safety issues": "safety_issue",
-            "Safety recommendations": "recommendation",
-            "Report sections": "report_section",
-            "Report summaries": "summary",
+    document_type_mapping = {
+        "Safety issues": "safety_issue",
+        "Safety recommendations": "recommendation",
+        "Report sections": "report_section",
+        "Report summaries": "summary",
+    }
+
+    mapped_document_type = [
+        document_type_mapping[dt] for dt in document_type if dt in document_type_mapping
+    ]
+
+    return Searching.SearchParams(
+        query=query,
+        search_type=search_type,
+        year_range=year_range,
+        document_type=mapped_document_type,
+        modes=modes,
+        agencies=agencies,
+    )
+
+
+def format_search_results(results, info, search_settings, search_start_time, username):
+    """
+    Format the search results for display and download.
+    """
+    results_to_download = results.copy()
+    # Format the results to be displayed in the dataframe
+    if not results.empty:
+        results["agency_id"] = results.apply(
+            lambda x: f"<a href='{x['url']}' style='color: #1a73e8; text-decoration-line: underline;'>{x['agency_id']}</a>",
+            axis=1,
+        )
+        results = results.drop(columns=["url"])
+        message = f"""Found {info["relevant_results"]} results from database.
+_These are the relevant results (out of {info["total_results"]}) from the search of the database, there is a no guarantee of its completeness._"""
+    else:
+        message = "No results found for the given criteria."
+        # Ensure plots are None if no results
+        plots = dict.fromkeys(
+            ["document_type", "mode", "year", "agency", "event_type"],
+        )
+
+        download_dict = {
+            "settings": search_settings,
+            "results": results_to_download,
+            "search_start_time": search_start_time,
+            "username": username,
         }
 
-        mapped_document_type = [
-            document_type_mapping[dt]
-            for dt in partial_params.document_type
-            if dt in document_type_mapping
-        ]
-        search_settings = partial_params._replace(
-            search_type=search_type,
-            document_type=mapped_document_type,
-        )
-    except KeyError as e:
-        print(f"[bold red]KeyError in search settings: {e}[/bold red]")
-        error = e
-        error_trace = traceback.format_exc()
-        search_settings = None
-    except ValueError as e:
-        print(f"[bold red]ValueError in search settings: {e}[/bold red]")
-        error = e
-        error_trace = traceback.format_exc()
-        search_settings = None
+    # Prepare results information
+    results_info = {
+        "total_results": info.get("total_results", 0),
+        "relevant_results": info.get("relevant_results", 0),
+        "has_results": results is not None,
+        "plots_generated": plots is not None,
+    }
 
-    return search_settings, error, error_trace
+    # Add trimmed results data for storage (if available)
+    if results is not None:
+        # Prepare results for storage (trimmed version)
+        trimmed_results = results.head(100).drop(columns=["document"], errors="ignore")
+        results_info["sample_results"] = trimmed_results.to_dict(orient="records")
+
+    return results, results_info, message, download_dict, plots
+
+
+def perform_actual_search(
+    settings: Searching.SearchParams,
+    relevance: float,
+    limit: int = 5000,
+):
+    results, info, plots = searching_instance.knowledge_search(
+        settings,
+        relevance=relevance,
+        limit=limit,
+    )
+
+    return results, info, plots
 
 
 def perform_search(  # noqa: PLR0913
@@ -455,100 +505,39 @@ def perform_search(  # noqa: PLR0913
     relevance: float,
 ):
     search_start_time = datetime.now(tz=timezone.utc)
-
-    # Construct search parameters
-    partial_params = Searching.SearchParams(
-        query=query,
-        year_range=year_range,
-        document_type=document_type,
-        modes=modes,
-        agencies=agencies,
-        search_type=None,
-    )
-
-    # Build complete search parameters
-    search_settings, error, error_trace = create_complete_search_params(partial_params)
-
-    if error is not None:
-        msg = f"An error has occurred during your search, please refresh page and try again.\nError: {error}"
-        raise gr.Error(
-            msg,
-            duration=5,
-        )
-
-    results, info, plots = None, None, None
-
-    # Do the complete search
-    try:
-        results, info, plots = searching_instance.knowledge_search(
-            search_settings,
-            relevance=relevance,
-            limit=5000,
-        )
-    except (KeyError, ValueError, RuntimeError) as e:
-        print(f"[bold red]Error in search: {e}[/bold red]")
-        error = e
-        error_trace = traceback.format_exc()
-
-    results_to_download, download_dict = None, None
-
-    # Format results for display and download
-    if error is None:
-        try:
-            results_to_download = results.copy()
-            # Format the results to be displayed in the dataframe
-            if not results.empty:
-                results["agency_id"] = results.apply(
-                    lambda x: f"<a href='{x['url']}' style='color: #1a73e8; text-decoration-line: underline;'>{x['agency_id']}</a>",
-                    axis=1,
-                )
-                results = results.drop(columns=["url"])
-                message = f"""Found {info["relevant_results"]} results from database.
-        _These are the relevant results (out of {info["total_results"]}) from the search of the database, there is a no guarantee of its completeness._"""
-            else:
-                message = "No results found for the given criteria."
-                # Ensure plots are None if no results
-                plots = dict.fromkeys(
-                    ["document_type", "mode", "year", "agency", "event_type"],
-                )
-
-            download_dict = {
-                "settings": search_settings,
-                "results": results_to_download,
-                "search_start_time": search_start_time,
-                "username": username,
-            }
-        except Exception as e:  # noqa: BLE001
-            print(f"[bold red]Error in formatting results: {e}[/bold red]")
-            error = e
-            error_trace = traceback.format_exc()
-
-    # Logging search using knowledge search storage system
-    search_id = str(uuid.uuid4())
-
     error_info = None
-    if error is not None:
+    try:
+        # Build complete search parameters
+        search_settings = create_complete_search_params(
+            query=query,
+            year_range=year_range,
+            document_type=document_type,
+            modes=modes,
+            agencies=agencies,
+        )
+
+        results, info, plots = perform_actual_search(
+            settings=search_settings,
+            relevance=relevance,
+        )
+
+        results, results_info, message, download_dict, plots = format_search_results(
+            results,
+            info,
+            search_settings,
+            search_start_time,
+            username,
+        )
+
+    except (ValueError, TypeError, KeyError) as e:
         error_info = {
-            "error": str(error),
-            "error_trace": error_trace,
+            "error": str(e),
+            "error_trace": traceback.format_exc(),
             "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
         }
 
-    # Prepare results information
-    results_info = {
-        "total_results": info.get("total_results", 0) if info else 0,
-        "relevant_results": info.get("relevant_results", 0) if info else 0,
-        "has_results": results is not None,
-        "plots_generated": plots is not None,
-    }
-
-    # Add trimmed results data for storage (if available)
-    if results is not None:
-        # Prepare results for storage (trimmed version)
-        trimmed_results = results.head(100).drop(columns=["document"], errors="ignore")
-        results_info["sample_results"] = trimmed_results.to_dict(orient="records")
-
     try:
+        search_id = str(uuid.uuid4())
         knowledge_search_store.store_search_log(
             username=username,
             search_id=search_id,
@@ -560,10 +549,11 @@ def perform_search(  # noqa: PLR0913
     except Exception as e:  # noqa: BLE001
         print(f"✗ Failed to store search log: {e}")
 
-    if error is not None:
-        msg = f"An error has occurred during your search, please refresh page and try again.\nError: {error}"
+    if error_info is not None:
+        msg = f"An error has occurred during your search, please refresh page and try again.\nError: {error_info['error']}"
         raise gr.Error(
-            msg,
+            title="Error while conducting search",
+            message=msg,
             duration=5,
         )
 

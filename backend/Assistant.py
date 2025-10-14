@@ -53,7 +53,7 @@ class CompleteHistory(list):
                 }
                 for curr in self
             ]
-        except ValueError as e:
+        except KeyError as e:
             msg = f"Failed to format history: {e}"
             raise ValueError(msg) from e
 

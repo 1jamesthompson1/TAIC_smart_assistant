@@ -9,6 +9,7 @@ import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.data.tables import TableClient
 from azure.storage.blob import BlobServiceClient
 
@@ -414,16 +415,19 @@ class ConversationMetadataStore:
             Dictionary with conversation data including full message history, or None if not found
         """
         # Get metadata from Table Storage
-        entity = self.table_client.get_entity(
-            partition_key=username,
-            row_key=conversation_id,
-        )
+        try:
+            entity = self.table_client.get_entity(
+                partition_key=username,
+                row_key=conversation_id,
+            )
 
-        # Get full conversation history from blob storage
-        history = self.blob_store.retrieve_conversation_blob(
-            username,
-            conversation_id,
-        )
+            # Get full conversation history from blob storage
+            history = self.blob_store.retrieve_conversation_blob(
+                username,
+                conversation_id,
+            )
+        except ResourceNotFoundError:
+            return None
         if history is None:
             return None
 

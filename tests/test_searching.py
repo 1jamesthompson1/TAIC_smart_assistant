@@ -43,7 +43,7 @@ class TestSearching:
 
         results, info, _plots = mock_searcher.knowledge_search(
             params=params,
-            limit=self.DEAULT_SEARCH_LIMIT,
+            limit=self.DEFAULT_SEARCH_LIMIT,
         )
 
         assert isinstance(results, pd.DataFrame)
@@ -176,7 +176,7 @@ class TestSearching:
         """Test that searches complete within reasonable time."""
         params = SearchParams(
             query="safety factor",
-            searchtype="vector",
+            search_type="vector",
             modes=["0", "1", "2"],
             agencies=["TAIC"],
             document_type=["safety_issue"],

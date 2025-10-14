@@ -272,23 +272,22 @@ class Searcher:
         final_query: list[float] | str | None = None
         if params.query == "" or params.query is None:
             final_query = None
-            search_type = (
-                None  # Fix up error with LLM not providing the right parameters
-            )
-        elif search_type in ["fts", "vector"]:
+            # Fix up error with LLM not providing the right parameters
+            params = params._replace(search_type=None)
+        elif params.search_type in ["fts", "vector"]:
             final_query = params.query
         else:
-            msg = f"type must be 'fts' or 'vector' not {search_type}"
+            msg = f"type must be 'fts' or 'vector' not {params.search_type}"
             raise ValueError(msg)
 
         self.__print_search_query(params.query, final_query, where_statement)
 
         search = self.all_document_types_table.search(
             final_query,
-            query_type=search_type,
+            query_type=params.search_type,
         )
 
-        if search_type == "vector":
+        if params.search_type == "vector":
             search = search.metric("cosine")
 
         results = (

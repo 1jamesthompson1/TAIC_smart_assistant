@@ -19,8 +19,7 @@ def test_tool_execution_search(mock_searcher):
         year_range=(2010, 2024),
         modes=["0", "1", "2"],
         agencies=["TAIC"],
-        type="vector",
-        limit=5,
+        search_type="vector",
     )
 
     assert isinstance(result, str)
