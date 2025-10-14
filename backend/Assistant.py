@@ -1,4 +1,5 @@
 import json
+from collections.abc import Generator
 from datetime import datetime, timezone
 
 import openai
@@ -273,6 +274,80 @@ class CompleteHistory(list):
         return [msg["display"] for msg in self]
 
 
+class AssistantPrompts:
+    """
+    A collection of prompt templates for the Assistant.
+    All methods are static since they don't require instance state.
+    """
+
+    @staticmethod
+    def converation_title():
+        return """
+You are part of a chatbot assistant at the Transport Accident Investigation Commission that help users add titles to their conversation. You will receive the conversation and you are too response with a 5 word summary of the conversation.
+Provide a title that will best help the user identify what conversation it was.
+Just respond with the title and nothing else.
+        """
+
+    @staticmethod
+    def general_info(columns, rows, last_updated):
+        return f"""
+Below is general information to help you contextualise the user's query.
+
+**Dataset Information:**
+The core of your tools are built around a vector database that contains accident reports from various transport accident investigation commissions, including:
+- New Zealand (TAIC)
+- Australia (ATSB)
+- Canada (TSB)
+There are {len(columns)} columns with {rows} rows.
+The columns available are: {", ".join(columns)}
+The data was last updated on {last_updated}.
+
+**Key Definitions:**
+
+Safety factor - Any (non-trivial) events or conditions, which increases safety risk. If they occurred in the future, these would
+increase the likelihood of an occurrence, and/or the
+severity of any adverse consequences associated with the
+occurrence.
+
+Safety issue - A safety factor that:
+• can reasonably be regarded as having the
+potential to adversely affect the safety of future
+operations, and
+• is characteristic of an organisation, a system, or an
+operational environment at a specific point in time.
+Safety Issues are derived from safety factors classified
+either as Risk Controls or Organisational Influences.
+
+Safety theme - Indication of recurring circumstances or causes, either across transport modes or over time. A safety theme may
+cover a single safety issue, or two or more related safety
+issues.
+"""
+
+    @staticmethod
+    def orient_plan_system(general_info):
+        return f"""
+You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now(timezone.utc)}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues.
+
+You will be provided the conversation history including any function calls and output you have made. You are to orient yourself to the user's query and provide a plan for how you will react to the user's query. If you need more information you should call functions to get that information. If you have enough information to respond to the user, you should provide a short guideline for how you will respond to the user (you will be acting on this plan momentarily).
+
+{general_info}
+
+"""
+
+    @staticmethod
+    def act_system(general_info):
+        return f"""
+You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now(timezone.utc)}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues. Keep your responses short and to the point.
+
+You will be provided the conversation history including the plan you have made.
+You are to act on your plan, this may involve calling functions to get more information or providing a response for the user.
+
+If you choose to respond to the user, ensure you provide a concise and accurate answer based on the information available. If you reference any reports, ensure you provide the report IDs. If you reference any other document you should provide the document type and document ID.
+
+{general_info}
+"""
+
+
 class Assistant:
     def __init__(
         self,
@@ -304,6 +379,9 @@ class Assistant:
         history=None,
         conversation_context_length=5,
     ) -> str:
+        """
+        Read the conversation history and provide a short title for the conversation.
+        """
         if history is None:
             history = []
         if history == []:
@@ -327,11 +405,7 @@ class Assistant:
                 messages=[
                     {
                         "role": "system",
-                        "content": """
-                    You are part of a chatbot assistant at the Transport Accident Investigation Commission that help users add titles to their conversation. You will receive the conversation and you are too response with a 5 word summary of the conversation.
-                    Provide a title that will best help the user identify what conversation it was.
-                    Just respond with the title and nothing else.
-                    """,
+                        "content": AssistantPrompts.converation_title(),
                     },
                     *msg,
                 ],
@@ -340,66 +414,124 @@ class Assistant:
             .message.content
         )
 
-    def process_input(self, history: CompleteHistory):  # noqa: C901, PLR0912, PLR0915
+    def complete_tool_use(
+        self,
+        history: CompleteHistory,
+        function_call,
+        chunk,
+    ) -> Generator[tuple[CompleteHistory, list[dict], bool], None, None]:
         """
-        Process user input and generate a response.
-
-        This is a generator that yields the updated history after each step.
-
-        It follows the orient-plan-act loop, calling tools as needed.
+        Complete a tool use by executing the tool and returning the result.
         """
-        general_info = f"""
-Below is general information to help you contextualise the user's query.
+        # Add function call to history
+        history.add_function_call(chunk.item.to_dict())
+        yield history, history.gradio_format(), True
 
-**Dataset Information:**
-The core of your tools are built around a vector database that contains accident reports from various transport accident investigation commissions, including:
-- New Zealand (TAIC)
-- Australia (ATSB)
-- Canada (TSB)
-There are {len(self.searcher.all_document_types_table.schema.names)} columns with {self.searcher.all_document_types_table.count_rows()} rows.
-The columns available are: {"".join(self.searcher.all_document_types_table.schema.names)}
-The data was last updated on {self.searcher.last_updated}.
+        # Execute the function
+        tool_name = function_call.name
+        tool_args = json.loads(function_call.arguments)
 
-**Key Definitions:**
+        tool = self.tool_map.get(tool_name)
+        if not tool:
+            result = f"Error: Unknown tool {tool_name}"
+        else:
+            result = tool.execute(**tool_args)
 
-Safety factor - Any (non-trivial) events or conditions, which increases safety risk. If they occurred in the future, these would
-increase the likelihood of an occurrence, and/or the
-severity of any adverse consequences associated with the
-occurrence.
+        # Add function result to history
+        history.complete_function_call(
+            output=result,
+            call_id=chunk.item.call_id,
+        )
+        yield history, history.gradio_format(), True
 
-Safety issue - A safety factor that:
-• can reasonably be regarded as having the
-potential to adversely affect the safety of future
-operations, and
-• is characteristic of an organisation, a system, or an
-operational environment at a specific point in time.
-Safety Issues are derived from safety factors classified
-either as Risk Controls or Organisational Influences.
-
-Safety theme - Indication of recurring circumstances or causes, either across transport modes or over time. A safety theme may
-cover a single safety issue, or two or more related safety
-issues.
+    def process_streamed_input(
+        self,
+        response,
+        history: CompleteHistory,
+    ) -> Generator[tuple[CompleteHistory, list[dict], bool], None, None]:
         """
+        Process a streamed response from OpenAI, handling both text and function calls.
 
-        orient_plan_system_message = f"""
-You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now(timezone.utc)}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues.
+        Args:
+            response: Streamed response from OpenAI API
+            history: The conversation history to update
 
-You will be provided the conversation history including any function calls and output you have made. You are to orient yourself to the user's query and provide a plan for how you will react to the user's query. If you need more information you should call functions to get that information. If you have enough information to respond to the user, you should provide a short guideline for how you will respond to the user (you will be acting on this plan momentarily).
+        Yields:
+            tuple: (updated_history, gradio_formatted_history, has_function_calls)
 
-{general_info}
+        Returns:
+            bool: True if any function calls were made (indicating we need another loop iteration)
         """
+        function_calls = {}
+        has_function_calls = False
 
-        act_system_message = f"""
-You are a expert working at the New Zealand transport accident investigation commission. Your job is to assistant employees of TAIC with their queries. The day is {datetime.now(timezone.utc)}. You should respond as if you are a senior accident investigator/research who is speaking to your colleagues. Keep your responses short and to the point.
+        for chunk in response:
+            # Prepare to collect either function calls or text deltas
+            if chunk.type == "response.output_item.added":
+                if chunk.item.type == "function_call":
+                    function_calls[chunk.output_index] = chunk.item
+                    has_function_calls = True
+                elif chunk.item.type == "message":
+                    history.add_message("assistant", "")
+                    yield history, history.gradio_format(), has_function_calls
 
-You will be provided the conversation history including the plan you have made.
-You are to act on your plan, this may involve calling functions to get more information or providing a response for the user.
+            # Collect the function call arguments as they stream in
+            elif chunk.type == "response.function_call_arguments.delta":
+                index = chunk.output_index
+                if function_calls.get(index):
+                    function_calls[index].arguments += chunk.delta
 
-If you choose to respond to the user, ensure you provide a concise and accurate answer based on the information available. If you reference any reports, ensure you provide the report IDs. If you reference any other document you should provide the document type and document ID.
+            # Collect the message text as it streams in
+            elif chunk.type == "response.output_text.delta":
+                history.update_last_message(chunk.delta)
+                yield history, history.gradio_format(), has_function_calls
 
-{general_info}
+            # Handle completed function call - execute it
+            elif (
+                chunk.type == "response.output_item.done"
+                and chunk.item.type == "function_call"
+            ):
+                # Use yield from to delegate to complete_tool_use generator
+                # This allows the UI to update as the tool is executed
+                yield from self.complete_tool_use(
+                    history=history,
+                    function_call=function_calls[chunk.output_index],
+                    chunk=chunk,
+                )
+            # Handle message done and yield final message
+            elif (
+                chunk.type == "response.output_item.done"
+                and chunk.item.type == "message"
+            ):
+                yield history, history.gradio_format(), has_function_calls
+
+        return has_function_calls
+
+    def process_input(
+        self,
+        history: CompleteHistory,
+    ) -> Generator[tuple[CompleteHistory, list[dict]], None, None]:
         """
+        Process user input and generate a response using the orient/plan/act loop.
 
+        This is a generator that yields the updated history after each step, allowing
+        the UI to update in real-time as the assistant thinks and responds.
+
+        Flow:
+        1. Orient/Plan: Assistant analyzes the query and plans its response
+        2. Act: Assistant executes the plan (may call tools or respond directly)
+        3. Loop: If tools were called, repeat from step 1 to process tool results
+
+        Args:
+            history: The conversation history containing the user's latest message
+
+        Yields:
+            tuple: (updated_history, gradio_formatted_history) after each update
+
+        Returns:
+            tuple: Final (history, gradio_formatted_history) when complete
+        """
+        # Validate inputs
         if not isinstance(history, CompleteHistory):
             msg = "history must be a CompleteHistory instance"
             raise TypeError(msg)
@@ -409,7 +541,19 @@ If you choose to respond to the user, ensure you provide a concise and accurate 
 
         print(f"[bold]Processing user input {history[-1]['display']['content']}[/bold]")
 
+        # Prepare system messages with context
+        general_info = AssistantPrompts.general_info(
+            columns=self.searcher.all_document_types_table.schema.names,
+            rows=self.searcher.all_document_types_table.count_rows(),
+            last_updated=self.searcher.last_updated,
+        )
+        orient_plan_system_message = AssistantPrompts.orient_plan_system(general_info)
+        act_system_message = AssistantPrompts.act_system(general_info)
+
+        # Orient/Plan/Act loop - continue until no more function calls are needed
         while True:
+            # STEP 1: Orient and Plan
+            # Assistant thinks about the query and plans how to respond
             orient_plan_response = self.openai_client.responses.create(
                 model="gpt-4.1",
                 instructions=orient_plan_system_message,
@@ -417,9 +561,10 @@ If you choose to respond to the user, ensure you provide a concise and accurate 
                 tools=[tool.to_openai_format() for tool in self.tools],
                 store=False,
                 stream=True,
-                tool_choice="none",
+                tool_choice="none",  # No tool calls in planning phase
             )
 
+            # Stream the planning thoughts to the UI
             history.start_thought()
             for chunk in orient_plan_response:
                 if chunk.type == "response.output_text.delta":
@@ -429,7 +574,9 @@ If you choose to respond to the user, ensure you provide a concise and accurate 
             history.end_thought()
             yield history, history.gradio_format()
 
-            response = self.openai_client.responses.create(
+            # STEP 2: Act on the Plan
+            # Assistant executes the plan (may call tools or provide final response)
+            act_response = self.openai_client.responses.create(
                 model="gpt-4.1",
                 instructions=act_system_message,
                 input=history.openai_format(),
@@ -439,64 +586,20 @@ If you choose to respond to the user, ensure you provide a concise and accurate 
                 stream=True,
             )
 
-            function_calls = {}
-            for chunk in response:
-                # Prepare to collect either function calls or text deltas
-                if chunk.type == "response.output_item.added":
-                    if chunk.item.type == "function_call":
-                        function_calls[chunk.output_index] = chunk.item
-                    elif chunk.item.type == "message":
-                        history.add_message("assistant", "")
-                        yield history, history.gradio_format()
+            # Process the action response (handles both text and function calls)
+            has_function_calls = False
+            for history_update, gradio_update, had_calls in self.process_streamed_input(
+                act_response,
+                history,
+            ):
+                history = history_update
+                has_function_calls = had_calls
+                yield history, gradio_update
 
-                # Collect the function call arguments as they stream in
-                elif chunk.type == "response.function_call_arguments.delta":
-                    index = chunk.output_index
-
-                    if function_calls[index]:
-                        function_calls[index].arguments += chunk.delta
-
-                # Collect the message text as it streams in
-                elif chunk.type == "response.output_text.delta":
-                    history.update_last_message(chunk.delta)
-                    yield history, history.gradio_format()
-
-                # Handle function call
-                elif (
-                    chunk.type == "response.output_item.done"
-                    and chunk.item.type == "function_call"
-                ):
-                    # Handling of functions is sequential, so we will execute them in order.
-
-                    history.add_function_call(chunk.item.to_dict())
-
-                    yield history, history.gradio_format()
-
-                    message = function_calls[chunk.output_index]
-                    tool_name = message.name
-                    tool_args = json.loads(message.arguments)
-
-                    tool = self.tool_map.get(tool_name)
-                    if not tool:
-                        result = f"Error: Unknown tool {tool_name}"
-                    else:
-                        result = tool.execute(**tool_args)
-
-                    history.complete_function_call(
-                        output=result,
-                        call_id=chunk.item.call_id,
-                    )
-                    yield history, history.gradio_format()
-
-                # Handle message done and yield final message
-                elif (
-                    chunk.type == "response.output_item.done"
-                    and chunk.item.type in "message"
-                ):
-                    yield history, history.gradio_format()
-
-            # If I have function calls, I need to loop again to get the final answer
-            if not function_calls:
+            # STEP 3: Decide whether to loop
+            # If function calls were made, loop again to let assistant process results
+            # Otherwise, we're done - assistant has provided final response
+            if not has_function_calls:
                 break
 
         return history, history.gradio_format()

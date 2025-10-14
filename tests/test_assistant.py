@@ -41,14 +41,53 @@ def test_complete_history_gradio_format():
     history = CompleteHistory([])
     history.add_message("user", "Hello")
     history.add_message("assistant", "Hi there")
+    history.add_message("user", "Can you tell me about recent ATSB investigations?")
+    history.start_thought("I need to find information about ATSB investigations.")
+    history.end_thought()
+    history.add_function_call(
+        {
+            "name": "search_knowledge",
+            "arguments": {"query": "ATSB investigations"},
+            "type": "function_call",
+        },
+    )
+    history.complete_function_call(
+        output="Found 3 relevant ATSB investigations.",
+        call_id="manual",
+    )
 
     gradio_format = history.gradio_format()
-    expected_message_len = 2
+    expected_message_len = (
+        6  # user, assistant, user, thought, function call, function result
+    )
     assert len(gradio_format) == expected_message_len
     assert gradio_format[0]["role"] == "user"
     assert gradio_format[0]["content"] == "Hello"
     assert gradio_format[1]["role"] == "assistant"
     assert gradio_format[1]["content"] == "Hi there"
+
+    # thought
+    thought_message = history[-3]
+    assert thought_message["display"]["role"] == "assistant"
+    assert (
+        "I need to find information about ATSB investigations."
+        in thought_message["display"]["content"]
+    )
+    assert thought_message["ai"]["role"] == "assistant"
+    assert (
+        "I need to find information about ATSB investigations."
+        in thought_message["ai"]["content"]
+    )
+    # Check that tool usage is included in the last message
+    function_call = history[-2]
+    assert function_call["display"]["role"] == "assistant"
+    assert "Executing search_knowledge" in function_call["display"]["content"]
+
+    function_result = history[-1]
+    assert function_result["display"]["role"] == "assistant"
+    assert (
+        "Found 3 relevant ATSB investigations." in function_result["display"]["content"]
+    )
 
 
 @patch("backend.Assistant.Assistant.process_input")
@@ -140,6 +179,29 @@ def test_real_conversation_processing(mock_assistant):
     final_history, gradio_format = results[-1]
     assert len(final_history) > 1  # Should have user message + assistant response
     assert len(gradio_format) > 1
+
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_USE_REAL_SERVICES"),
+    reason="Requires real services",
+)
+def test_basic_tool_use(mock_assistant):
+    """Test basic tool usage."""
+    history = CompleteHistory([])
+    history.add_message("user", "Can you tell me about recent ATSB investigations?")
+
+    # Process the input (this will make real API calls)
+    results = list(mock_assistant.process_input(history))
+
+    assert len(results) > 0
+    final_history, gradio_format = results[-1]
+    assert len(final_history) > 1  # Should have user message + assistant response
+    assert len(gradio_format) > 1
+    # Check that a function call was made
+    function_calls = [
+        msg for msg in final_history if msg["ai"].get("type") == "function_call"
+    ]
+    assert len(function_calls) > 0
 
 
 @pytest.mark.skipif(

@@ -13,13 +13,13 @@ from backend.Assistant import Assistant
 dotenv.load_dotenv()  # Load environment variables from .env file if present
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def use_real_services():
     """Check if tests should use real services or mocks."""
     return os.getenv("TEST_USE_REAL_SERVICES", "false").lower() == "true"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_env_vars(use_real_services):
     """Mock environment variables required for the app."""
     env_vars = {
@@ -65,7 +65,7 @@ def mock_env_vars(use_real_services):
         yield
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_azure_storage(use_real_services):
     """Mock Azure storage components."""
     if use_real_services:
@@ -107,7 +107,7 @@ def mock_azure_storage(use_real_services):
             }
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_searcher(use_real_services):
     """Mock or use real Searching.Searcher class."""
     if use_real_services:
@@ -138,7 +138,7 @@ def mock_searcher(use_real_services):
             yield mock_searcher
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_openai(use_real_services):
     """Mock or use real OpenAI client."""
     if use_real_services:
@@ -161,18 +161,27 @@ def mock_openai(use_real_services):
             yield mock_client
 
 
-@pytest.fixture
-def client():
-    """Test client for the FastAPI app."""
-    # Import app here after all mocking is set up
+@pytest.fixture(scope="session")
+def client(
+    mock_env_vars,  # noqa: ARG001
+    mock_azure_storage,  # noqa: ARG001
+    mock_searcher,  # noqa: ARG001
+    mock_openai,  # noqa: ARG001
+):
+    """
+    Test client for the FastAPI app.
+    Uses session scope to load only once for all tests, improving performance.
 
+    Dependencies are explicitly listed to ensure proper initialization order.
+    The fixtures are not used in the function body but are required for setup.
+    """
     with TestClient(fastapi_app) as test_client:
         yield test_client
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_assistant(mock_searcher, use_real_services):
-    """Mock or real Assistant instance."""
+    """Mock or real Assistant instance. Session-scoped for performance."""
 
     if use_real_services:
         assistant = Assistant(

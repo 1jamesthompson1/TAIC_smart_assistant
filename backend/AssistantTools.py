@@ -67,7 +67,7 @@ class SearchTool(Tool):
                     "type": "string",
                     "description": "The query to search for. If left as an empty string it will return all results that match the other parameters.",
                 },
-                "type": {
+                "search_type": {
                     "type": "string",
                     "enum": ["fts", "vector"],
                     "description": "The type of search to perform. fts should be used if the query is asking a specific question about an organisation, etc. Otherwise for more general information use vector, it will embed your query and search the vector database.",
@@ -95,7 +95,7 @@ class SearchTool(Tool):
             },
             "required": [
                 "query",
-                "type",
+                "search_type",
                 "year_range",
                 "document_type",
                 "modes",
