@@ -46,8 +46,7 @@ jobs:
             --account-name ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }} \
             --container-name configs \
             --name test.env \
-            --file .env \
-            --auth-mode login
+            --file .env
 
     - name: Install dependencies
       run: uv sync --dev
