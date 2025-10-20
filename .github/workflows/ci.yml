@@ -43,7 +43,7 @@ jobs:
         azcliversion: latest
         inlineScript: |
           az storage blob download \
-            --account-name ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }} \
+            --account-name taicdocumentsearcherdata \
             --container-name envs \
             --name test.env \
             --file .env
