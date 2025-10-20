@@ -36,11 +36,17 @@ jobs:
       uses: azure/login@v2
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+    - name: Azure CLI script
+      uses: azure/cli@v2
+      with:
+        azcliversion: latest
+        inlineScript: |
+          az account show
     - name: Download test environment file
       uses: azure/cli@v2
       with:
         azcliversion: latest
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
         inlineScript: |
           az storage blob download \
             --account-name taicdocumentsearcherdata \
