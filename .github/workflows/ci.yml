@@ -47,6 +47,7 @@ jobs:
             --container-name configs \
             --name test.env \
             --file .env \
+            --auth-mode login
 
     - name: Install dependencies
       run: uv sync --dev
