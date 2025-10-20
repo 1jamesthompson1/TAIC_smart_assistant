@@ -32,27 +32,9 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v3
 
-    - name: Azure Login
-      uses: azure/login@v2
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-    - name: Azure CLI script
-      uses: azure/cli@v2
-      with:
-        azcliversion: latest
-        inlineScript: |
-          az account show
     - name: Download test environment file
-      uses: azure/cli@v2
-      with:
-        azcliversion: latest
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-        inlineScript: |
-          az storage blob download \
-            --account-name taicdocumentsearcherdata \
-            --container-name envs \
-            --name test.env \
-            --file .env
+      run: |
+        curl -o .env "https://${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}.blob.core.windows.net/envs/test.env?${{ secrets.AZURE_STORAGE_SAS_TOKEN }}"
 
     - name: Install dependencies
       run: uv sync --dev
