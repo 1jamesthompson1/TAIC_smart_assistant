@@ -1018,7 +1018,7 @@ app = gr.mount_gradio_app(
     app,
     smart_tools,
     path="/tools",
-    auth_dependency=get_user,
+    auth_dependency=lambda request: get_user(request),
     show_api=False,
 )
 
