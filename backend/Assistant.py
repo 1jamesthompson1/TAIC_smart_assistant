@@ -281,7 +281,7 @@ class AssistantPrompts:
     """
 
     @staticmethod
-    def converation_title():
+    def conversation_title():
         return """
 You are part of a chatbot assistant at the Transport Accident Investigation Commission that help users add titles to their conversation. You will receive the conversation and you are too response with a 5 word summary of the conversation.
 Provide a title that will best help the user identify what conversation it was.
@@ -405,7 +405,7 @@ class Assistant:
                 messages=[
                     {
                         "role": "system",
-                        "content": AssistantPrompts.converation_title(),
+                        "content": AssistantPrompts.conversation_title(),
                     },
                     *msg,
                 ],

@@ -141,7 +141,7 @@ class ReadReportTool(Tool):
         }
 
     def execute(self, **_kwargs) -> str:
-        return "Not yet implemented yet"
+        return "Not yet implemented"
 
 
 class ReasoningTool(Tool):
