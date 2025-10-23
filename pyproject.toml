@@ -22,6 +22,7 @@ dependencies = [
     "azure-storage-blob>=12.25.1,<13",
     "azure-ai-inference>=1.0.0b9",
     "uvicorn>=0.34.2,<0.35",
+    "xlsxwriter>=3.2.9",
 ]
 
 [dependency-groups]

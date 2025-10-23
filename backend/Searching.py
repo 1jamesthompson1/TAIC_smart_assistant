@@ -319,15 +319,19 @@ class Searcher:
             ]
             results = results[cols]
 
+            print(
+                f"[bold]Relevance scores range from {results['relevance'].min():.4f} to {results['relevance'].max():.4f} with mean {results['relevance'].mean():.4f}[/bold]",
+            )
+
             if relevance > 0:
                 print(
                     f"[bold yellow]Filtering results to only include relevance >= {relevance}[/bold yellow]",
                 )
                 results = results[results["relevance"] >= relevance]
-                info["relevant_results"] = len(results)
-                print(
-                    f"[bold green]Found {len(results)} relevant results for query: {params.query}[/bold green]",
-                )
+        info["relevant_results"] = len(results)
+        print(
+            f"[bold green]Found {info['relevant_results']} relevant results for query: {params.query}[/bold green]",
+        )
 
         # Convert mode back to strings
         results["mode"] = results["mode"].apply(

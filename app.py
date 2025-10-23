@@ -362,10 +362,10 @@ def load_previous_search(request: gr.Request, search_id: str):
 
         # Map document types back to UI format
         document_type_reverse_mapping = {
-            "safety_issue": "Safety Issues",
-            "recommendation": "Safety Recommendations",
+            "safety_issue": "Safety issues",
+            "recommendation": "Safety recommendations",
             "report_section": "Report sections",
-            "report_text": "Entire Reports",
+            "report_text": "Report summaries",
         }
         mapped_document_types = search_settings.get("document_type", [])
         if isinstance(mapped_document_types, list):
@@ -436,7 +436,14 @@ def create_complete_search_params(
     )
 
 
-def format_search_results(results, info, search_settings, search_start_time, username):
+def format_search_results(  # noqa: PLR0913
+    results: pd.DataFrame,
+    plots: dict,
+    info: dict,
+    search_settings: Searching.SearchParams,
+    search_start_time: datetime,
+    username: str,
+):
     """
     Format the search results for display and download.
     """
@@ -450,6 +457,7 @@ def format_search_results(results, info, search_settings, search_start_time, use
         results = results.drop(columns=["url"])
         message = f"""Found {info["relevant_results"]} results from database.
 _These are the relevant results (out of {info["total_results"]}) from the search of the database, there is a no guarantee of its completeness._"""
+
     else:
         message = "No results found for the given criteria."
         # Ensure plots are None if no results
@@ -457,12 +465,12 @@ _These are the relevant results (out of {info["total_results"]}) from the search
             ["document_type", "mode", "year", "agency", "event_type"],
         )
 
-        download_dict = {
-            "settings": search_settings,
-            "results": results_to_download,
-            "search_start_time": search_start_time,
-            "username": username,
-        }
+    download_dict = {
+        "settings": search_settings,
+        "results": results_to_download,
+        "search_start_time": search_start_time,
+        "username": username,
+    }
 
     # Prepare results information
     results_info = {
@@ -523,6 +531,7 @@ def perform_search(  # noqa: PLR0913
 
         results, results_info, message, download_dict, plots = format_search_results(
             results,
+            plots,
             info,
             search_settings,
             search_start_time,
@@ -537,20 +546,26 @@ def perform_search(  # noqa: PLR0913
         }
 
     try:
-        search_id = str(uuid.uuid4())
-        knowledge_search_store.store_search_log(
-            username=username,
-            search_id=search_id,
-            search_settings=search_settings or {},
-            results_info=results_info,
-            error_info=error_info,
-        )
-        print(f"✓ Stored search log with ID: {search_id}")
+        if os.getenv("NO_LOGS", "false").lower() == "true":
+            print(
+                "[orange]⚠ NO_LOGS is set to true, skipping storing search log[/orange]",
+            )
+        else:
+            search_id = str(uuid.uuid4())
+            knowledge_search_store.store_search_log(
+                username=username,
+                search_id=search_id,
+                search_settings=search_settings,
+                relevance=relevance,
+                results_info=results_info,
+                error_info=error_info,
+            )
+            print(f"✓ Stored search log with ID: {search_id}")
     except Exception as e:  # noqa: BLE001
         print(f"✗ Failed to store search log: {e}")
 
     if error_info is not None:
-        msg = f"An error has occurred during your search, please refresh page and try again.\nError: {error_info['error']}"
+        msg = f"An error has occurred during your search, please refresh page and try again.\nError: \n{error_info}"
         raise gr.Error(
             title="Error while conducting search",
             message=msg,
@@ -576,7 +591,7 @@ def update_download_button(download_dict: dict):
     """
     if download_dict["results"] is None or download_dict["results"].empty:
         return gr.DownloadButton(visible=False)
-    save_name = f"{download_dict['settings']['query'][: min(20, len(download_dict['settings']['query']))]}_{download_dict['search_start_time'].strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+    save_name = f"{download_dict['settings'].query[: min(20, len(download_dict['settings'].query))]}_{download_dict['search_start_time'].strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
     temp_dir = Path(tempfile.mkdtemp())
     file_path = temp_dir / save_name
 
@@ -590,11 +605,11 @@ def update_download_button(download_dict: dict):
             "",
         ],
     ]
-    for key, value in download_dict["settings"].items():
+    for key, value in download_dict["settings"]._asdict().items():
         summary_data.append([f"{key}:", str(value)])
     summary_df = pd.DataFrame(summary_data, columns=["Setting", "Value"])
 
-    with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+    with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
         summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")
         download_dict["results"].to_excel(writer, index=False, sheet_name="Results")
 
@@ -917,12 +932,15 @@ with gr.Blocks(
                         choices=["TAIC", "ATSB", "TSB"],
                         value=["TAIC"],
                     )
+                    gr.Markdown(
+                        "*Note: Relevance threshold is highly sensitive and should be tuned if too many or too few results are being returned. Increase relevance to reduce the number of results*",
+                    )
                     relevance = gr.Slider(
                         label="Relevance",
                         minimum=0,
                         maximum=1,
                         step=0.01,
-                        value=0.6,
+                        value=0.2,
                     )
 
             with gr.Accordion(label="Result graphs", open=False), gr.Row():
@@ -966,30 +984,27 @@ with gr.Blocks(
                 event_type_plot,
             ]
 
-            search_event = (
-                search_button.click(
-                    perform_search,
-                    inputs=[
-                        username,
-                        query,
-                        year_range,
-                        document_type,
-                        modes,
-                        agencies,
-                        relevance,
-                    ],
-                    outputs=search_outputs,
-                )
-                .then(
-                    update_download_button,
-                    search_results_to_download,
-                    download_button,
-                )
-                .then(
-                    get_user_search_history,
-                    inputs=None,
-                    outputs=user_search_history,
-                )
+            search_button.click(
+                perform_search,
+                inputs=[
+                    username,
+                    query,
+                    year_range,
+                    document_type,
+                    modes,
+                    agencies,
+                    relevance,
+                ],
+                outputs=search_outputs,
+                scroll_to_output=True,
+            ).then(
+                update_download_button,
+                search_results_to_download,
+                download_button,
+            ).then(
+                get_user_search_history,
+                inputs=None,
+                outputs=user_search_history,
             )
             query.submit(
                 perform_search,
