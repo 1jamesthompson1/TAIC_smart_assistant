@@ -13,7 +13,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.data.tables import TableClient
 from azure.storage.blob import BlobServiceClient
 
-from . import Version
+from . import Searching, Version
 
 
 class BaseBlobStore(ABC):
@@ -481,11 +481,12 @@ class KnowledgeSearchMetadataStore:
         self.table_client = table_client
         self.blob_store = blob_store
 
-    def store_search_log(
+    def store_search_log(  # noqa: PLR0913
         self,
         username: str,
         search_id: str,
-        search_settings: dict,
+        search_settings: Searching.SearchParams,
+        relevance: float,
         results_info: dict,
         error_info: dict | None = None,
     ) -> bool:
@@ -504,7 +505,7 @@ class KnowledgeSearchMetadataStore:
         """
         # 1. Prepare comprehensive data for blob storage
         blob_data = {
-            "search_settings": search_settings,
+            "search_settings": search_settings._asdict(),
             "results_info": results_info,
             "error_info": error_info,
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
@@ -527,14 +528,12 @@ class KnowledgeSearchMetadataStore:
         entity = {
             "PartitionKey": username,
             "RowKey": search_id,
-            "query": search_settings.get("query", "")[
-                :100
-            ],  # Truncate for table storage
-            "search_type": search_settings.get("type", "unknown"),
-            "document_types": str(search_settings.get("document_type", [])),
-            "modes": str(search_settings.get("modes", [])),
-            "agencies": str(search_settings.get("agencies", [])),
-            "relevance_threshold": search_settings.get("relevance", 0.0),
+            "query": search_settings.query[:100],  # Truncate for table storage
+            "search_type": search_settings.search_type,
+            "document_types": str(search_settings.document_type),
+            "modes": str(search_settings.modes),
+            "agencies": str(search_settings.agencies),
+            "relevance_threshold": relevance,
             "total_results": results_info.get("total_results", 0),
             "relevant_results": results_info.get("relevant_results", 0),
             "has_error": error_info is not None,
