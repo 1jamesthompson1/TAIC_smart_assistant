@@ -5,6 +5,7 @@ import pytest
 
 from app import conversation_store, knowledge_search_store
 from backend.Assistant import CompleteHistory
+from backend.Searching import SearchParams
 
 
 @pytest.mark.skipif(
@@ -59,7 +60,15 @@ def test_knowledge_search_logging():
     knowledge_search_store.store_search_log(
         username="testuser",
         search_id=search_id,
-        search_settings={"query": "test search", "limit": 5},
+        search_settings=SearchParams(
+            query="test query",
+            search_type="fts",
+            year_range=(2010, 2024),
+            document_type=["safety_issue"],
+            modes=["0", "1"],
+            agencies=["TAIC"],
+        ),
+        relevance=0.5,
         results_info={"total_results": expected_results},
         error_info=None,
     )

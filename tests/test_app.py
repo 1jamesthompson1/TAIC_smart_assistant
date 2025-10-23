@@ -80,7 +80,16 @@ class TestToolsFunctions:
         not os.getenv("TEST_USE_REAL_SERVICES"),
         reason="Requires real services",
     )
-    def test_perform_search_functionality(self):
+    @pytest.mark.parametrize(
+        ("relevance", "query", "expected_results"),
+        [
+            (0.2, "safety factor", True),
+            (0.8, "safety factor", False),
+            (0.2, "", True),
+            (0.0, "", True),
+        ],
+    )
+    def test_perform_search_functionality(self, relevance, query, expected_results):
         """Test the perform_search function with real services."""
 
         # Test search execution
@@ -95,49 +104,32 @@ class TestToolsFunctions:
             _event_plot,
         ) = perform_search(
             username="testuser",
-            query="safety factor",
+            query=query,
             year_range=[2010, 2024],
             document_type=["Safety issues"],
-            modes=["Aviation", "Rail", "Maritime"],
+            modes=[0, 1, 2],
             agencies=["TAIC"],
-            relevance=0.6,
+            relevance=relevance,
         )
 
         assert isinstance(results, pd.DataFrame)
+        assert results.empty != expected_results
         assert isinstance(message, str)
         assert download_dict is not None
         assert "settings" in download_dict
         assert "results" in download_dict
-
-    @pytest.mark.skipif(
-        not os.getenv("TEST_USE_REAL_SERVICES"),
-        reason="Requires real services",
-    )
-    def test_perform_search_with_empty_query(self):
-        """Test perform_search with empty query."""
-
-        (
-            results,
-            _download_dict,
-            message,
-            _doc_plot,
-            _mode_plot,
-            _year_hist,
-            _agency_plot,
-            _event_plot,
-        ) = perform_search(
-            username="testuser",
-            query="",
-            year_range=[2010, 2024],
-            document_type=["Safety issues"],
-            modes=["Aviation"],
-            agencies=["TAIC"],
-            relevance=0.6,
-        )
-
-        # Should handle empty query gracefully
-        assert isinstance(results, pd.DataFrame)
-        assert isinstance(message, str)
+        if expected_results:
+            assert _doc_plot is not None
+            assert _mode_plot is not None
+            assert _year_hist is not None
+            assert _agency_plot is not None
+            assert _event_plot is not None
+        else:
+            assert _doc_plot is None
+            assert _mode_plot is None
+            assert _year_hist is None
+            assert _agency_plot is None
+            assert _event_plot is None
 
 
 class TestConversationFunctions:
