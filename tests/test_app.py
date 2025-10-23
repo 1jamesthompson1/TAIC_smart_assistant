@@ -106,7 +106,7 @@ class TestToolsFunctions:
             username="testuser",
             query=query,
             year_range=[2010, 2024],
-            document_type=["Safety issue"],
+            document_type=["Safety issues"],
             modes=[0, 1, 2],
             agencies=["TAIC"],
             relevance=relevance,

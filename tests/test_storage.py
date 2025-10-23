@@ -60,6 +60,7 @@ def test_knowledge_search_logging():
         username="testuser",
         search_id=search_id,
         search_settings={"query": "test search", "limit": 5},
+        relevance=0.5,
         results_info={"total_results": expected_results},
         error_info=None,
     )

@@ -362,10 +362,10 @@ def load_previous_search(request: gr.Request, search_id: str):
 
         # Map document types back to UI format
         document_type_reverse_mapping = {
-            "safety_issue": "Safety Issues",
-            "recommendation": "Safety Recommendations",
+            "safety_issue": "Safety issues",
+            "recommendation": "Safety recommendations",
             "report_section": "Report sections",
-            "report_text": "Entire Reports",
+            "report_text": "Report summaries",
         }
         mapped_document_types = search_settings.get("document_type", [])
         if isinstance(mapped_document_types, list):
