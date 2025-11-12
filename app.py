@@ -769,17 +769,19 @@ with gr.Blocks(
 
                 with gr.Column(scale=3):
                     with gr.Row():
-                        conversation_title = gr.Markdown("## New conversation")
+                        conversation_title = gr.Markdown("## Untitled conversation")
                     with gr.Row():
                         conversation_id = gr.Markdown(None)
                         new_conversation_button = gr.Button(
                             "New conversation",
-                            render=False,
+                            visible="hidden",
                         )
 
                     # Update the conversation title and id displays when the current conversation state changes
                     current_conversation_title.change(
-                        lambda title: f"## {title}" if title else "## New conversation",
+                        lambda title: f"## {title}"
+                        if title
+                        else "## Untitled conversation",
                         inputs=current_conversation_title,
                         outputs=conversation_title,
                     ).then(
@@ -860,6 +862,10 @@ with gr.Blocks(
                 get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
+            ).then(
+                lambda: gr.Button(visible=False),
+                None,
+                new_conversation_button,
             )
 
             new_conversation_button.click(
@@ -876,6 +882,10 @@ with gr.Blocks(
                 get_user_conversations_metadata,
                 inputs=None,
                 outputs=user_conversations,
+            ).then(
+                lambda: gr.Button(visible=False),
+                None,
+                new_conversation_button,
             )
 
             input_text.submit(
@@ -908,6 +918,10 @@ with gr.Blocks(
                 lambda: gr.Textbox(interactive=True),
                 None,
                 input_text,
+            ).then(
+                lambda: gr.Button(visible=True),
+                None,
+                new_conversation_button,
             )
 
         with gr.TabItem("Knowledge Search"):
