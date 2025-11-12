@@ -197,7 +197,14 @@ def handle_undo(history: Assistant.CompleteHistory, undo_data: gr.UndoData):
 
 def handle_edit(history: Assistant.CompleteHistory, edit_data: gr.EditData):
     history.edit(edit_data.index, edit_data.value)
-    return history, history.gradio_format(), None
+    return history, history.gradio_format(), None, edit_data.value
+
+
+def handle_example_select(
+    selection: gr.SelectData,
+    current_conversation: Assistant.CompleteHistory,
+):
+    return handle_submit(selection.value["text"], current_conversation)
 
 
 def handle_submit(user_input, history: Assistant.CompleteHistory = None):
@@ -209,6 +216,7 @@ def handle_submit(user_input, history: Assistant.CompleteHistory = None):
 
     return (
         gr.Textbox(interactive=False, value=None),
+        user_input,
         history,
         history.gradio_format(),
         conversation_id,
@@ -787,17 +795,6 @@ footer {visibility: hidden} /* Hides the default gradio footer */
     username = gr.State()
     smart_tools.load(get_user_name, inputs=None, outputs=username)
 
-    user_conversations = gr.State([])
-    current_conversation = gr.State(None)
-    current_conversation_id = gr.State(None)
-    current_conversation_title = gr.State(None)
-
-    smart_tools.load(
-        get_user_conversations_metadata,
-        inputs=None,
-        outputs=user_conversations,
-    )
-
     with gr.Row():
         gr.Markdown("# TAIC smart tools")
         data_update = gr.Markdown("Data last updated: ")
@@ -812,7 +809,13 @@ footer {visibility: hidden} /* Hides the default gradio footer */
     )
 
     with gr.Tabs():
-        with gr.TabItem("Assistant"):
+        with gr.TabItem("Assistant") as assistant_tab:
+            user_conversations = gr.State([])
+            new_input = gr.State(None)
+            current_conversation = gr.State(None)
+            current_conversation_id = gr.State(None)
+            current_conversation_title = gr.State(None)
+
             chatbot_interface = gr.Chatbot(
                 type="messages",
                 height="90%",
@@ -825,12 +828,73 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                     "https://www.taic.org.nz/themes/custom/taic/favicon/android-icon-192x192.png",
                 ),
                 render=False,
+                examples=[
+                    {
+                        "display_text": "Recent TAIC safety issues",
+                        "text": "Can you please provide a summary of recent safety issues identified by TAIC in the last 2 years?",
+                    },
+                    {
+                        "display_text": "Breakdown of common causes of incidents",
+                        "text": "What are the common threads that run through aviations safety incidents investigated by TAIC over the last decade? Is this different from what is seen in ATSB aviation incident reports?",
+                    },
+                    {
+                        "display_text": "Mentions of 'International Maritime Organization'",
+                        "text": "How many times has the 'International Maritime Organization' been mentioned in TAIC's investigation reports?",
+                    },
+                ],
+                placeholder="**Welcome to the TAIC smart assistant**\nI have access to TAIC's, ATSB's and TSB's investigations reports, safety issues and recommendations from 2000 to present day. Ask me anything in the box below, or try out one of the example questions!\n\n*Please note that while I strive to provide accurate and helpful information, I may occasionally generate incorrect or nonsensical responses. Always verify critical information from authoritative sources.*",
             )
 
+            input_text = gr.Textbox(
+                placeholder="Please type your message here...",
+                show_label=False,
+                submit_btn="Send",
+                render=False,
+                lines=3,
+            )
             new_conversation_button = gr.Button(
                 "New conversation",
                 visible="hidden",
                 render=False,
+            )
+
+            smart_tools.load(
+                fn=get_user_conversations_metadata,
+                inputs=None,
+                outputs=user_conversations,
+            )
+
+            assistant_process = new_input.change(
+                assistant_instance.process_input,
+                inputs=[current_conversation],
+                outputs=[current_conversation, chatbot_interface],
+                trigger_mode="once",
+            )
+            ui_update = (
+                assistant_process.then(
+                    create_or_update_conversation,
+                    inputs=[
+                        current_conversation_id,
+                        current_conversation_title,
+                        current_conversation,
+                    ],
+                    outputs=current_conversation_title,
+                )
+                .then(
+                    get_user_conversations_metadata,
+                    inputs=None,
+                    outputs=user_conversations,
+                )
+                .then(
+                    lambda: gr.Textbox(interactive=True),
+                    None,
+                    input_text,
+                )
+                .then(
+                    lambda: gr.Button(visible=True),
+                    None,
+                    new_conversation_button,
+                )
             )
             with gr.Row():
                 with gr.Column(scale=1):
@@ -925,89 +989,67 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                         conversation_id,
                     )
 
-                    input_text = gr.Textbox(
-                        placeholder="Please type your message here...",
-                        show_label=False,
-                        submit_btn="Send",
-                    )
+                    input_text.render()
+
+            # Handling the clearning of the conversation
+            clear_trigger = gr.State(None)
+            clear_trigger.change(
+                lambda: (
+                    None,
+                    [],
+                    Assistant.CompleteHistory([]),
+                    "## New conversation",
+                ),
+                None,
+                [
+                    conversation_id,
+                    chatbot_interface,
+                    current_conversation,
+                    conversation_title,
+                ],
+                queue=False,
+            ).then(
+                get_user_conversations_metadata,
+                inputs=None,
+                outputs=user_conversations,
+            ).then(
+                lambda: gr.Button(visible=False),
+                None,
+                new_conversation_button,
+            )
+
+            chatbot_interface.clear(
+                lambda: uuid.uuid4(),
+                None,
+                clear_trigger,
+                js=True,
+            )
+
+            new_conversation_button.click(
+                lambda: uuid.uuid4(),
+                None,
+                clear_trigger,
+                js=True,
+            )
+
+            # Handle undo action
             chatbot_interface.undo(
                 fn=handle_undo,
                 inputs=current_conversation,
                 outputs=[current_conversation, chatbot_interface, input_text],
             )
+
+            # Handle examples, edit and submit actions
+
             chatbot_interface.edit(
                 fn=handle_edit,
                 inputs=current_conversation,
-                outputs=[current_conversation, chatbot_interface, input_text],
-                queue=False,
-            ).then(
-                assistant_instance.process_input,
-                inputs=[current_conversation],
-                outputs=[current_conversation, chatbot_interface],
-            ).then(
-                create_or_update_conversation,
-                inputs=[
-                    current_conversation_id,
-                    current_conversation_title,
+                outputs=[
                     current_conversation,
-                ],
-                outputs=current_conversation_title,
-            ).then(
-                get_user_conversations_metadata,
-                inputs=None,
-                outputs=user_conversations,
-            ).then(
-                lambda: gr.Textbox(interactive=True),
-                None,
-                input_text,
-            )
-
-            def clear():
-                return (
-                    None,
-                    [],
-                    Assistant.CompleteHistory([]),
-                    "## New conversation",
-                )
-
-            chatbot_interface.clear(
-                clear,
-                None,
-                [
-                    conversation_id,
                     chatbot_interface,
-                    current_conversation,
-                    conversation_title,
+                    input_text,
+                    new_input,
                 ],
-                queue=False,
-            ).then(
-                get_user_conversations_metadata,
-                inputs=None,
-                outputs=user_conversations,
-            ).then(
-                lambda: gr.Button(visible=False),
-                None,
-                new_conversation_button,
-            )
-
-            new_conversation_button.click(
-                clear,
-                None,
-                [
-                    conversation_id,
-                    chatbot_interface,
-                    current_conversation,
-                    conversation_title,
-                ],
-                queue=False,
-            ).then(
-                get_user_conversations_metadata,
-                inputs=None,
-                outputs=user_conversations,
-            ).then(
-                lambda: gr.Button(visible=False),
-                None,
-                new_conversation_button,
             )
 
             input_text.submit(
@@ -1015,35 +1057,23 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                 inputs=[input_text, current_conversation],
                 outputs=[
                     input_text,
+                    new_input,
                     current_conversation,
                     chatbot_interface,
                     current_conversation_id,
                 ],
-                queue=False,
-            ).then(
-                assistant_instance.process_input,
+            )
+
+            chatbot_interface.example_select(
+                fn=handle_example_select,
                 inputs=[current_conversation],
-                outputs=[current_conversation, chatbot_interface],
-            ).then(
-                create_or_update_conversation,
-                inputs=[
-                    current_conversation_id,
-                    current_conversation_title,
+                outputs=[
+                    input_text,
+                    new_input,
                     current_conversation,
+                    chatbot_interface,
+                    current_conversation_id,
                 ],
-                outputs=current_conversation_title,
-            ).then(
-                get_user_conversations_metadata,
-                inputs=None,
-                outputs=user_conversations,
-            ).then(
-                lambda: gr.Textbox(interactive=True),
-                None,
-                input_text,
-            ).then(
-                lambda: gr.Button(visible=True),
-                None,
-                new_conversation_button,
             )
 
         with gr.TabItem("Knowledge Search"):
