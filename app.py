@@ -685,8 +685,8 @@ def get_footer():
     return gr.HTML(f"""
 <style>
     .custom-footer {{
+        margin-top: auto;
         text-align: center;
-        margin-top: 20px;
         padding: 10px;
         background-color: {TAIC_theme.primary_50};
         color: {TAIC_theme.neutral_50};
@@ -707,6 +707,7 @@ with gr.Blocks(
     fill_height=True,
     fill_width=True,
     head='<link rel="icon" href="/static/favicon.png" type="image/png">',
+    css="footer {visibility: hidden}",  # Hides the footer
 ) as smart_tools:
     username = gr.State()
     smart_tools.load(get_user_name, inputs=None, outputs=username)
