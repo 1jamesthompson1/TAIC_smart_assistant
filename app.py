@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import tempfile
 import traceback
 import uuid
@@ -133,6 +134,13 @@ app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 # Dependency to get the current user
 def get_user(request: Request):
+    # Developer no-login mode: return a dev username and set session
+    if os.getenv("NO_LOGIN", "false").lower() == "true":
+        dev_username = os.getenv("DEV_USERNAME", "devuser")
+        # Try to ensure session user is available for code paths that read it
+        request.session["user"] = {"name": dev_username}
+        return dev_username
+
     user = request.session.get("user")
     if user:
         return user["name"]
@@ -197,7 +205,14 @@ def handle_submit(user_input, history: Assistant.CompleteHistory = None):
         history = Assistant.CompleteHistory([])
     history.add_message("user", user_input)
 
-    return gr.Textbox(interactive=False, value=None), history, history.gradio_format()
+    conversation_id = str(uuid.uuid4())
+
+    return (
+        gr.Textbox(interactive=False, value=None),
+        history,
+        history.gradio_format(),
+        conversation_id,
+    )
 
 
 def create_or_update_conversation(
@@ -222,16 +237,28 @@ def create_or_update_conversation(
     ):
         conversation_title = assistant_instance.provide_conversation_title(history)
 
+    print(f"Looking at updating conversation {conversation_id} for user {username}")
+
     if os.getenv("NO_LOGS", "false").lower() == "true":
         print(
             "[orange]⚠ NO_LOGS is set to true, skipping storing conversation[/orange]",
         )
         return conversation_title
 
+    # Clean conversation_id to just the UUID part if it has extra formatting
+    uuid_regex = (
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    )
+    cleaned_conversation_id = (
+        re.search(uuid_regex, conversation_id).group(0)
+        if re.search(uuid_regex, conversation_id)
+        else conversation_id
+    )
+
     # Store using blob storage (JSON in blob + metadata in table)
     success = conversation_store.create_or_update_conversation(
         username=username,
-        conversation_id=conversation_id,
+        conversation_id=cleaned_conversation_id,
         history=history,
         conversation_title=conversation_title,
         db_version=searching_instance.db_version,
@@ -271,9 +298,9 @@ def load_conversation(request: gr.Request, conversation_id: str):
             print(
                 f"[bold red]⚠ Version incompatibility for conversation {conversation_id}: {version_message}[/bold red]",
             )
-            formatted_id = f"`{conversation['id']}`"
+            formatted_id = f"ID: `{conversation['id']}`"
             formatted_title = (
-                f"**{conversation['conversation_title']}** ⚠️ *Version Incompatible*"
+                f"{conversation['conversation_title']} ⚠️ *Version Incompatible*"
             )
             # Return empty messages with error indication
             error_message = {
@@ -295,19 +322,18 @@ def load_conversation(request: gr.Request, conversation_id: str):
                 f"[orange]⚠ Version warning for conversation {conversation_id}: {version_message}[/orange]",
             )
             # Add a subtle warning to the title but still load the conversation
-            formatted_title = f"**{conversation['conversation_title']}** ⚠️"
+            formatted_title = f"{conversation['conversation_title']} ⚠️"
         else:
-            formatted_title = f"**{conversation['conversation_title']}**"
+            formatted_title = conversation["conversation_title"]
 
         print(f"[bold green]✓ Loaded conversation {conversation_id}[/bold green]")
-        formatted_id = f"`{conversation['id']}`"
 
         history = Assistant.CompleteHistory(conversation["messages"])
 
-        return history, history.gradio_format(), formatted_id, formatted_title
+        return history, history.gradio_format(), conversation["id"], formatted_title
     print(f"[bold red]✗ Failed to load conversation {conversation_id}[/bold red]")
     history = Assistant.CompleteHistory([])
-    return history, [], f"`{conversation_id}`", "*Failed to load*"
+    return history, [], conversation_id, "Failed to load"
 
 
 searching_instance = Searching.Searcher(
@@ -687,6 +713,9 @@ with gr.Blocks(
 
     user_conversations = gr.State([])
     current_conversation = gr.State(None)
+    current_conversation_id = gr.State(None)
+    current_conversation_title = gr.State(None)
+
     smart_tools.load(
         get_user_conversations_metadata,
         inputs=None,
@@ -710,12 +739,6 @@ with gr.Blocks(
         with gr.TabItem("Assistant"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.Markdown("## Current conversation")
-                    with gr.Group():
-                        gr.Markdown("**Conversation ID:**")
-                        conversation_id = gr.Markdown(f"`{uuid.uuid4()!s}`")
-                        gr.Markdown("**Title:**")
-                        conversation_title = gr.Markdown("*New conversation*")
                     gr.Markdown("## Previous conversations")
 
                     @gr.render(inputs=[user_conversations])
@@ -739,14 +762,31 @@ with gr.Blocks(
                                     outputs=[
                                         current_conversation,
                                         chatbot_interface,
-                                        conversation_id,
-                                        conversation_title,
+                                        current_conversation_id,
+                                        current_conversation_title,
                                     ],
                                 )
 
                 with gr.Column(scale=3):
                     with gr.Row():
-                        gr.Markdown("### Chat: ")
+                        conversation_title = gr.Markdown("## New conversation")
+                    with gr.Row():
+                        conversation_id = gr.Markdown(None)
+                        new_conversation_button = gr.Button(
+                            "New conversation",
+                            render=False,
+                        )
+
+                    # Update the conversation title and id displays when the current conversation state changes
+                    current_conversation_title.change(
+                        lambda title: f"## {title}" if title else "## New conversation",
+                        inputs=current_conversation_title,
+                        outputs=conversation_title,
+                    ).then(
+                        lambda cid: f"ID: `{cid}`" if cid else None,
+                        current_conversation_id,
+                        conversation_id,
+                    )
 
                     chatbot_interface = gr.Chatbot(
                         type="messages",
@@ -782,8 +822,12 @@ with gr.Blocks(
                 outputs=[current_conversation, chatbot_interface],
             ).then(
                 create_or_update_conversation,
-                inputs=[conversation_id, conversation_title, current_conversation],
-                outputs=conversation_title,
+                inputs=[
+                    current_conversation_id,
+                    current_conversation_title,
+                    current_conversation,
+                ],
+                outputs=current_conversation_title,
             ).then(
                 get_user_conversations_metadata,
                 inputs=None,
@@ -794,13 +838,32 @@ with gr.Blocks(
                 input_text,
             )
 
-            chatbot_interface.clear(
-                lambda: (
-                    f"`{uuid.uuid4()!s}`",
+            def clear():
+                return (
+                    None,
                     [],
                     Assistant.CompleteHistory([]),
-                    "*New conversation*",
-                ),
+                    "## New conversation",
+                )
+
+            chatbot_interface.clear(
+                clear,
+                None,
+                [
+                    conversation_id,
+                    chatbot_interface,
+                    current_conversation,
+                    conversation_title,
+                ],
+                queue=False,
+            ).then(
+                get_user_conversations_metadata,
+                inputs=None,
+                outputs=user_conversations,
+            )
+
+            new_conversation_button.click(
+                clear,
                 None,
                 [
                     conversation_id,
@@ -818,7 +881,12 @@ with gr.Blocks(
             input_text.submit(
                 fn=handle_submit,
                 inputs=[input_text, current_conversation],
-                outputs=[input_text, current_conversation, chatbot_interface],
+                outputs=[
+                    input_text,
+                    current_conversation,
+                    chatbot_interface,
+                    current_conversation_id,
+                ],
                 queue=False,
             ).then(
                 assistant_instance.process_input,
@@ -826,8 +894,12 @@ with gr.Blocks(
                 outputs=[current_conversation, chatbot_interface],
             ).then(
                 create_or_update_conversation,
-                inputs=[conversation_id, conversation_title, current_conversation],
-                outputs=conversation_title,
+                inputs=[
+                    current_conversation_id,
+                    current_conversation_title,
+                    current_conversation,
+                ],
+                outputs=current_conversation_title,
             ).then(
                 get_user_conversations_metadata,
                 inputs=None,
