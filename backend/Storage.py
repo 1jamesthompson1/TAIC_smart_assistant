@@ -353,6 +353,7 @@ class ConversationMetadataStore:
             else now,
             "app_version": Version.CURRENT_VERSION,
             "db_version": db_version,
+            "deleted": False,
         }
 
         # Upsert the entity (create or update)
@@ -372,7 +373,7 @@ class ConversationMetadataStore:
         """
         # Get metadata from Table Storage only
         entities = self.table_client.query_entities(
-            query_filter=f"PartitionKey eq '{username}'",
+            query_filter=f"PartitionKey eq '{username}' and deleted ne true",
         )
 
         conversations = [
@@ -443,25 +444,29 @@ class ConversationMetadataStore:
 
     def delete_conversation(self, username: str, conversation_id: str) -> bool:
         """
-        Delete both metadata and blob for a conversation.
+        Marks a conversation as deleted in the metadata. The blob data is kept.
 
         Args:
             username: Username of the conversation owner
-            conversation_id: ID of the conversation to delete
+            conversation_id: ID of the conversation to mark as deleted
 
         Returns:
             True if successful, False otherwise
         """
-        # Delete blob first
-        self.blob_store.delete_conversation_blob(username, conversation_id)
-
-        # Delete metadata from table
-        self.table_client.delete_entity(
-            partition_key=username,
-            row_key=conversation_id,
-        )
-
-        return True
+        try:
+            entity = self.table_client.get_entity(
+                partition_key=username,
+                row_key=conversation_id,
+            )
+        except ResourceNotFoundError:
+            return False
+        else:
+            entity["deleted"] = True
+            entity["deleted_at"] = datetime.now(tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S",
+            )
+            self.table_client.update_entity(entity)
+            return True
 
 
 class KnowledgeSearchMetadataStore:

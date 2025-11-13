@@ -12,6 +12,9 @@ from backend.Assistant import Assistant
 
 dotenv.load_dotenv()  # Load environment variables from .env file if present
 
+# Always set this to true
+os.environ["NO_LOGIN"] = "false"
+
 
 @pytest.fixture(scope="session")
 def use_real_services():

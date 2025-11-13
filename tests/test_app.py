@@ -1,5 +1,7 @@
+import contextlib
 import os
 import uuid
+from io import StringIO
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -148,13 +150,23 @@ class TestConversationFunctions:
         assert len(conversations) >= 0
 
         # Test creating/updating conversation
-        str(uuid.uuid4())
+        conversation_id = str(uuid.uuid4())
         history = CompleteHistory([])
         history.add_message("user", "Test message")
         history.add_message("assistant", "Test response")
 
-        # This would require authentication context, so we'll just test the function exists
-        assert callable(create_or_update_conversation)
+        string_to_avoid = "Failed to store conversation"
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            results = create_or_update_conversation(
+                Mock(username="testuser"),
+                conversation_id=conversation_id,
+                history=history,
+                conversation_title="Test Conversation",
+            )
+        output = buf.getvalue()
+        assert string_to_avoid not in output
+        assert isinstance(results, str)
 
     @pytest.mark.skipif(
         not os.getenv("TEST_USE_REAL_SERVICES"),
@@ -165,7 +177,7 @@ class TestConversationFunctions:
 
         # Test loading non-existent conversation
         conversation_id = str(uuid.uuid4())
-        history, gradio_format, conv_id, title = load_conversation(
+        history, gradio_format, conv_id, title, _btn = load_conversation(
             Mock(username="testuser"),
             conversation_id,
         )
@@ -183,7 +195,7 @@ class TestConversationFunctions:
         """Test loading conversations a real conversation."""
         conversation_id = "1f6ebb26-abc4-4d7f-ab0b-da07c34ca73e"
 
-        history, _gradio_format, _conv_id, _title = load_conversation(
+        history, _gradio_format, _conv_id, _title, _btn = load_conversation(
             Mock(username="testuser"),
             conversation_id,
         )
