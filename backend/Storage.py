@@ -465,7 +465,10 @@ class ConversationMetadataStore:
             entity["deleted_at"] = datetime.now(tz=timezone.utc).strftime(
                 "%Y-%m-%d %H:%M:%S",
             )
-            self.table_client.update_entity(entity)
+            try:
+                self.table_client.update_entity(entity)
+            except Exception:
+                return False
             return True
 
 

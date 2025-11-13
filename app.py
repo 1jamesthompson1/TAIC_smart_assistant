@@ -262,11 +262,8 @@ def create_or_update_conversation(
     uuid_regex = (
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
     )
-    cleaned_conversation_id = (
-        re.search(uuid_regex, conversation_id).group(0)
-        if re.search(uuid_regex, conversation_id)
-        else conversation_id
-    )
+    match = re.search(uuid_regex, conversation_id)
+    cleaned_conversation_id = match.group(0) if match else conversation_id
 
     # Store using blob storage (JSON in blob + metadata in table)
     success = conversation_store.create_or_update_conversation(
@@ -771,7 +768,7 @@ def get_footer():
     return gr.HTML(f"""
 <style>
     .custom-footer {{
-        margin-top: auto;
+        margin-top: 20px;
         text-align: center;
         padding: 10px;
         background-color: {TAIC_theme.primary_50};
@@ -840,7 +837,7 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                     },
                     {
                         "display_text": "Breakdown of common causes of incidents",
-                        "text": "What are the common threads that run through aviations safety incidents investigated by TAIC over the last decade? Is this different from what is seen in ATSB aviation incident reports?",
+                        "text": "What are the common threads that run through aviation safety incidents investigated by TAIC over the last decade? Is this different from what is seen in ATSB aviation incident reports?",
                     },
                     {
                         "display_text": "Mentions of 'International Maritime Organization'",
@@ -1024,14 +1021,14 @@ footer {visibility: hidden} /* Hides the default gradio footer */
             )
 
             chatbot_interface.clear(
-                lambda: uuid.uuid4(),
+                uuid.uuid4,
                 None,
                 clear_trigger,
                 js=True,
             )
 
             new_conversation_button.click(
-                lambda: uuid.uuid4(),
+                uuid.uuid4,
                 None,
                 clear_trigger,
                 js=True,
