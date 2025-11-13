@@ -207,12 +207,17 @@ def handle_example_select(
     return handle_submit(selection.value["text"], current_conversation)
 
 
-def handle_submit(user_input, history: Assistant.CompleteHistory = None):
+def handle_submit(
+    user_input,
+    history: Assistant.CompleteHistory = None,
+    conversation_id=None,
+):
     if history is None:
         history = Assistant.CompleteHistory([])
     history.add_message("user", user_input)
 
-    conversation_id = str(uuid.uuid4())
+    if conversation_id is None:
+        conversation_id = str(uuid.uuid4())
 
     return (
         gr.Textbox(interactive=False, value=None),
@@ -392,7 +397,7 @@ def delete_conversation(  # noqa: PLR0913
     if current_conv_id == to_delete:
         # Clear current conversation if it's the one being deleted
         current_conv = Assistant.CompleteHistory([])
-        chatbot = gr.Chatbot(value=current_conv.gradio_format())
+        chatbot = gr.Chatbot(value=current_conv.gradio_format(), type="messages")
         current_conv_id = None
         current_conv_title = None
         new_conversation_button = gr.Button(visible=False)
@@ -842,7 +847,7 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                         "text": "How many times has the 'International Maritime Organization' been mentioned in TAIC's investigation reports?",
                     },
                 ],
-                placeholder="**Welcome to the TAIC smart assistant**\nI have access to TAIC's, ATSB's and TSB's investigations reports, safety issues and recommendations from 2000 to present day. Ask me anything in the box below, or try out one of the example questions!\n\n*Please note that while I strive to provide accurate and helpful information, I may occasionally generate incorrect or nonsensical responses. Always verify critical information from authoritative sources.*",
+                placeholder="#### Welcome to the TAIC smart assistant\nI have access to TAIC's, ATSB's and TSB's investigations reports, safety issues and recommendations from 2000 to present day. Ask me anything in the box below, or try out one of the example questions!\n\n*Please note that while I strive to provide accurate and helpful information, I may occasionally generate incorrect or nonsensical responses. Always verify critical information from authoritative sources.*\n\n##### Examples",
             )
 
             input_text = gr.Textbox(
@@ -969,7 +974,7 @@ footer {visibility: hidden} /* Hides the default gradio footer */
 
                 with gr.Column(scale=3):
                     with gr.Row():
-                        conversation_title = gr.Markdown("## Untitled conversation")
+                        conversation_title = gr.Markdown(None)
                     with gr.Row():
                         conversation_id = gr.Markdown(None)
                         new_conversation_button.render()
@@ -978,9 +983,7 @@ footer {visibility: hidden} /* Hides the default gradio footer */
 
                     # Update the conversation title and id displays when the current conversation state changes
                     current_conversation_title.change(
-                        lambda title: f"## {title}"
-                        if title
-                        else "## Untitled conversation",
+                        lambda title: f"## {title}" if title else None,
                         inputs=current_conversation_title,
                         outputs=conversation_title,
                     ).then(
@@ -998,14 +1001,16 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                     None,
                     [],
                     Assistant.CompleteHistory([]),
-                    "## New conversation",
+                    None,
+                    None,
                 ),
                 None,
                 [
                     conversation_id,
                     chatbot_interface,
                     current_conversation,
-                    conversation_title,
+                    current_conversation_id,
+                    current_conversation_title,
                 ],
                 queue=False,
             ).then(
@@ -1054,7 +1059,7 @@ footer {visibility: hidden} /* Hides the default gradio footer */
 
             input_text.submit(
                 fn=handle_submit,
-                inputs=[input_text, current_conversation],
+                inputs=[input_text, current_conversation, current_conversation_id],
                 outputs=[
                     input_text,
                     new_input,
