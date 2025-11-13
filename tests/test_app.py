@@ -184,7 +184,7 @@ class TestConversationFunctions:
 
         assert len(history) == 0
         assert gradio_format == []
-        assert conv_id == f"`{conversation_id}`"
+        assert conv_id == f"{conversation_id}"
         assert title == "*Failed to load*"
 
     @pytest.mark.skipif(
