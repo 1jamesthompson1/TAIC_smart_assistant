@@ -433,6 +433,9 @@ class ConversationMetadataStore:
         if history is None:
             return None
 
+        if entity.get("deleted", False):
+            return None
+
         return {
             "conversation_title": entity.get("conversation_title"),
             "messages": history,
@@ -460,6 +463,7 @@ class ConversationMetadataStore:
                 row_key=conversation_id,
             )
         except ResourceNotFoundError:
+            print(f"Conversation {conversation_id} not found for user {username}")
             return False
         else:
             entity["deleted"] = True

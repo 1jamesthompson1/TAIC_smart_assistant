@@ -14,6 +14,7 @@ dotenv.load_dotenv()  # Load environment variables from .env file if present
 
 # Always set this to true
 os.environ["NO_LOGIN"] = "false"
+os.environ["NO_LOGS"] = "false"  # Ensure logging is enabled for tests
 
 
 @pytest.fixture(scope="session")
