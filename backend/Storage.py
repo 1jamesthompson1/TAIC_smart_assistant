@@ -9,9 +9,10 @@ import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.data.tables import TableClient
 from azure.storage.blob import BlobServiceClient
+from rich import print  # noqa: A004
 
 from . import Searching, Version
 
@@ -467,7 +468,8 @@ class ConversationMetadataStore:
             )
             try:
                 self.table_client.update_entity(entity)
-            except Exception:
+            except HttpResponseError as e:
+                print(f"Error marking conversation as deleted: {e}")
                 return False
             return True
 
