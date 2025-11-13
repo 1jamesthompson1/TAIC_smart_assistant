@@ -4,13 +4,16 @@ import uuid
 from io import StringIO
 from unittest.mock import Mock, patch
 
+import gradio as gr
 import pandas as pd
 import pytest
 
 from app import (
     assistant_instance,
     create_or_update_conversation,
+    delete_conversation,
     get_user_conversations_metadata,
+    handle_example_select,
     load_conversation,
     perform_search,
 )
@@ -185,7 +188,7 @@ class TestConversationFunctions:
         assert len(history) == 0
         assert gradio_format == []
         assert conv_id == f"{conversation_id}"
-        assert title == "*Failed to load*"
+        assert title == "Failed to load"
 
     @pytest.mark.skipif(
         not os.getenv("TEST_USE_REAL_SERVICES"),
@@ -203,3 +206,101 @@ class TestConversationFunctions:
         assert isinstance(history, list)
 
         assert len(history) > 0
+
+    @pytest.mark.skipif(
+        not os.getenv("TEST_USE_REAL_SERVICES"),
+        reason="Requires real services",
+    )
+    def test_delete_conversation_function(self):
+        """Test the delete_conversation function with real services."""
+        # First, create a conversation
+        conversation_id = str(uuid.uuid4())
+        history = CompleteHistory([])
+        history.add_message("user", "Test message for delete")
+        history.add_message("assistant", "Test response")
+
+        # Create the conversation
+        create_or_update_conversation(
+            Mock(username="testuser"),
+            conversation_id=conversation_id,
+            history=history,
+            conversation_title="Test Conversation for Delete",
+        )
+
+        # Now delete it
+        request = Mock(username="testuser")
+        current_conv = CompleteHistory([])
+        chatbot = gr.Chatbot(value=[], type="messages")
+        current_conv_id = None  # Not the one being deleted
+        current_conv_title = None
+        to_delete = conversation_id
+
+        result = delete_conversation(
+            request,
+            current_conv,
+            chatbot,
+            current_conv_id,
+            current_conv_title,
+            to_delete,
+        )
+
+        # Check that it returned success (no clear since current_conv_id != to_delete)
+        assert result[0] == current_conv
+        assert result[1] == chatbot
+        assert result[2] == current_conv_id
+        assert result[3] == current_conv_title
+        assert not result[4].visible  # Since current_conv_id is None
+
+        loaded_history, _, _, _, _ = load_conversation(
+            Mock(username="testuser"),
+            conversation_id,
+        )
+        assert len(loaded_history) == 0  # Should be empty if deleted
+
+    def test_delete_conversation_cancelled(self):
+        """Test the delete_conversation function when deletion is cancelled."""
+        request = Mock(username="testuser")
+        current_conv = CompleteHistory([])
+        current_conv.add_message("user", "test")
+        chatbot = gr.Chatbot(value=current_conv.gradio_format(), type="messages")
+        current_conv_id = "test_conv_id"
+        current_conv_title = "Test Title"
+        to_delete = None  # Cancelled
+
+        result = delete_conversation(
+            request,
+            current_conv,
+            chatbot,
+            current_conv_id,
+            current_conv_title,
+            to_delete,
+        )
+
+        # Should return the same state, no changes
+        assert result[0] == current_conv
+        assert result[1] == chatbot
+        assert result[2] == current_conv_id
+        assert result[3] == current_conv_title
+        assert result[
+            4
+        ].visible  # Button should be visible since current_conv_id is not None
+
+    def test_handle_example_select(self):
+        """Test the handle_example_select function realistically."""
+        selection = Mock()
+        selection.value = {"text": "Example question text"}
+        current_conversation = CompleteHistory([])
+
+        result = handle_example_select(selection, current_conversation)
+
+        # Check that the user message was added to the history
+        assert len(result[2]) == 1
+        assert result[2][0]["ai"]["role"] == "user"
+        assert result[2][0]["ai"]["content"] == "Example question text"
+
+        # Check the returned components
+        assert not result[0].interactive
+        assert result[0].value is None
+        assert result[1] == "Example question text"
+        assert result[3] == result[2].gradio_format()  # Should be the gradio format
+        assert isinstance(result[4], str)  # conversation_id
