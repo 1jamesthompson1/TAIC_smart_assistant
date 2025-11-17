@@ -37,6 +37,8 @@ logging.getLogger("azure.storage").setLevel(logging.WARNING)
 logging.getLogger("azure.data.tables").setLevel(logging.WARNING)
 dotenv.load_dotenv(override=True)
 
+static_path = Path(__file__).parent / "static"
+
 # Setup the storage connection
 print("[bold green]✓ Initializing Azure Storage connection[/bold green]")
 connection_string = f"AccountName={os.getenv('AZURE_STORAGE_ACCOUNT_NAME')};AccountKey={os.getenv('AZURE_STORAGE_ACCOUNT_KEY')};EndpointSuffix=core.windows.net"
@@ -765,14 +767,10 @@ TAIC_theme = gr.themes.Default(
 
 
 def get_footer():
-    with (
-        Path(__file__)
-        .parent.joinpath("static", "footer.html")
-        .open(
-            "r",
-            encoding="utf-8",
-        ) as f
-    ):
+    with (static_path / "footer.html").open(
+        "r",
+        encoding="utf-8",
+    ) as f:
         footer_html = f.read()
     return gr.HTML(footer_html)
 
@@ -1261,7 +1259,7 @@ with gr.Blocks(
 
         with gr.TabItem("Documentation"):
             # read the contents of the user-documentation.md file
-            with Path("static/user-documentation.html").open("r") as doc_file:
+            with (static_path / "user-documentation.html").open("r") as doc_file:
                 documentation_content = doc_file.read()
             gr.HTML(documentation_content)
 
@@ -1282,7 +1280,7 @@ with gr.Blocks(
     theme=TAIC_theme,
     fill_height=True,
     head='<link rel="icon" href="/static/favicon.png" type="image/png">',
-    css="static/styles.css",
+    css_paths=["static/styles.css"],
 ) as login_page:
     with gr.Column(elem_classes="complete-center"):
         gr.Markdown("# TAIC smart tools")
