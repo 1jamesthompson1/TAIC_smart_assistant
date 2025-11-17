@@ -1,0 +1,28 @@
+/* TAIC Theme Color Variables */
+:root {
+    --taic-primary: #2e679c;
+    --taic-secondary: #e6dca1;
+    --taic-neutral-50: #f9fafb; /* Light gray */
+    --taic-neutral-900: #111827; /* Dark gray */
+}
+
+
+/* Login Page Centering */
+.complete-center {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+/* Custom Footer Styles */
+
+footer {visibility: hidden} /* Hides the default gradio footer */
+
+.custom-footer { /* Custom footer class */
+    margin-top: 20px;
+    text-align: center;
+    padding: 10px;
+    background-color: var(--taic-primary);
+    color: var(--taic-neutral-50);
+}
