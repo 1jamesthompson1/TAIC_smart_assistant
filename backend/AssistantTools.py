@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .Searching import Searcher, SearchParams
@@ -192,3 +193,64 @@ class ReasoningTool(Tool):
             input=messages,
         )
         return response.output_text
+
+
+class DocumentationTool(Tool):
+    """This provides access to the smart tools platform documentation."""
+
+    @property
+    def name(self) -> str:
+        return "documentation"
+
+    @property
+    def description(self) -> str:
+        return "Provides access to the smart tools platform documentation. This includes information about the project it self (github readme) and the user documentation (which provides information for users on how to use the webapp)."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "documents": {
+                    "type": "array",
+                    "description": "A list of documents to retrieve.",
+                    "items": {
+                        "type": "string",
+                        "enum": ["readme", "user-documentation"],
+                    },
+                    "minItems": 1,
+                    "uniqueItems": True,
+                },
+            },
+            "required": ["documents"],
+        }
+
+    def execute(self, **_kwargs) -> str:
+        requested_documents = _kwargs.get("documents", [])
+
+        if len(requested_documents) == 0:
+            return "No documents specified."
+
+        project_root = Path(__file__).parent.parent
+
+        found_documents = []
+
+        if "readme" in requested_documents:
+            readme_path = project_root / "README.md"
+            if readme_path.exists():
+                with readme_path.open("r", encoding="utf-8") as f:
+                    readme_content = f.read()
+                found_documents.append(readme_content)
+            else:
+                found_documents.append("README file not found.")
+
+        if "user-documentation" in requested_documents:
+            user_doc_path = project_root / "static" / "user-documentation.html"
+            if user_doc_path.exists():
+                with user_doc_path.open("r", encoding="utf-8") as f:
+                    user_doc_content = f.read()
+                found_documents.append(user_doc_content)
+            else:
+                found_documents.append("User documentation file not found.")
+
+        return "\n\n".join(found_documents)

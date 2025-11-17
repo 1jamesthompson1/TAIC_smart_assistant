@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import openai
 from rich import print  # noqa: A004
 
-from .AssistantTools import SearchTool
+from .AssistantTools import DocumentationTool, SearchTool
 
 
 class CompleteHistory(list):
@@ -369,6 +369,7 @@ class Assistant:
         # Initialize tools
         self.tools = [
             SearchTool(searcher),
+            DocumentationTool(),
         ]
         self.tool_map = {tool.name: tool for tool in self.tools}
 
