@@ -37,6 +37,8 @@ logging.getLogger("azure.storage").setLevel(logging.WARNING)
 logging.getLogger("azure.data.tables").setLevel(logging.WARNING)
 dotenv.load_dotenv(override=True)
 
+static_path = Path(__file__).parent / "static"
+
 # Setup the storage connection
 print("[bold green]✓ Initializing Azure Storage connection[/bold green]")
 connection_string = f"AccountName={os.getenv('AZURE_STORAGE_ACCOUNT_NAME')};AccountKey={os.getenv('AZURE_STORAGE_ACCOUNT_KEY')};EndpointSuffix=core.windows.net"
@@ -765,23 +767,12 @@ TAIC_theme = gr.themes.Default(
 
 
 def get_footer():
-    return gr.HTML(f"""
-<style>
-    .custom-footer {{
-        margin-top: 20px;
-        text-align: center;
-        padding: 10px;
-        background-color: {TAIC_theme.primary_50};
-        color: {TAIC_theme.neutral_50};
-    }}
-</style>
-<div class="custom-footer">
-    <p>Created by <a href="https://github.com/1jamesthompson1">James Thompson</a> for the <a href="https://www.taic.org.nz">New Zealand Transport Accident Investigation Commission.</a></p>
-    <p>Contact directed to <a href="mailto:james.thompson@taic.org.nz">james.thompson@taic.org.nz</a> or for suggestions and/or bug reports please use the provided <a href="https://forms.office.com/Pages/ResponsePage.aspx?id=RmxQlKGu1key34UuP4dPFavrlUtUJCpGvY1oQw3ObrlUQjZSTFRFUDRZRk8wUUxPWkVYVEw1SUVDUy4u" target="_blank">feeback form</a>.</p>
-    <p>Project is being developed openly on <a href="https://github.com/1jamesthompson1/TAIC_smart_assistant">https://github.com/1jamesthompson1/TAIC_smart_assistant</a></p>
-    <p xmlns:cc="http://creativecommons.org/ns#" >This work is licensed under <a href="https://creativecommons.org/licenses/by/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer" style="display:inline-block;">CC BY 4.0<img style="height:22px!important;margin-left:3px;vertical-align:middle;display: inline-block;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt="CC logo"><img style="height:22px!important;margin-left:3px;vertical-align:middle;display: inline-block;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt="BY logo"></a></p>
-</div>
-""")
+    with (static_path / "footer.html").open(
+        "r",
+        encoding="utf-8",
+    ) as f:
+        footer_html = f.read()
+    return gr.HTML(footer_html)
 
 
 with gr.Blocks(
@@ -790,9 +781,7 @@ with gr.Blocks(
     fill_height=True,
     fill_width=True,
     head='<link rel="icon" href="/static/favicon.png" type="image/png">',
-    css="""
-footer {visibility: hidden} /* Hides the default gradio footer */
-""",  # Hides the footer
+    css_paths=["static/styles.css"],
 ) as smart_tools:
     username = gr.State()
     smart_tools.load(get_user_name, inputs=None, outputs=username)
@@ -1267,6 +1256,13 @@ footer {visibility: hidden} /* Hides the default gradio footer */
                 inputs=None,
                 outputs=user_search_history,
             )
+
+        with gr.TabItem("Documentation"):
+            # read the contents of the user-documentation.md file
+            with (static_path / "user-documentation.html").open("r") as doc_file:
+                documentation_content = doc_file.read()
+            gr.HTML(documentation_content)
+
     footer = get_footer()
 
 app = gr.mount_gradio_app(
@@ -1284,14 +1280,7 @@ with gr.Blocks(
     theme=TAIC_theme,
     fill_height=True,
     head='<link rel="icon" href="/static/favicon.png" type="image/png">',
-    css="""
-.complete-center {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-}
-""",
+    css_paths=["static/styles.css"],
 ) as login_page:
     with gr.Column(elem_classes="complete-center"):
         gr.Markdown("# TAIC smart tools")
