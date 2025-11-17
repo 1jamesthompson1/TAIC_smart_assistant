@@ -86,8 +86,8 @@ uv run uvicorn app:app --host localhost --port 7860 --reload --timeout-graceful-
 
 1. Create a feature branch from `main`
 2. Make your changes with appropriate commit messages
-3. Create a pull request
-4. When merging, use squash-and-merge with conventional commit keywords in the final commit message for automatic version bumping
+3. Create a pull request with a prefix of the type of change (`major:`, `minor:`, `patch:`)
+4. When merging, use squash-and-merge to keep a clean history
 
 #### Version Management
 
@@ -98,23 +98,13 @@ This project uses semantic versioning (MAJOR.MINOR.PATCH):
 - All conversations and searches store the app version they were created with
 - Version compatibility checking prevents loading incompatible data
 
-##### Auto-versioning Rules
+#### Auto-versioning Rules
 
-Commit messages can trigger different version bumps:
+PR titles should include one of the following keywords to indicate the type of version bump required:
 
-- `BREAKING:` or `breaking change:` → Major version bump
-- `feat:` or `feature:` or `minor:` → Minor version bump  
-- Everything else → Patch version bump
-
-##### Manual Version Bumping
-
-Use GitHub Actions workflow "Auto Version Bump" with manual trigger to specify version bump type.
-
-##### Manual Version Bumping
-
-Use GitHub Actions workflow "Auto Version Bump" with manual trigger to specify version bump type.
-
-**Note for Pull Requests**: When using squash-and-merge, ensure your final squashed commit message contains the appropriate keywords above, as the GitHub Action analyzes the squashed commit message for version bumping.
+- `major:` → Major version bump
+- `minor:` → Minor version bump  
+- `patch:` → Patch version bump
 
 ### CI/CD Configuration
 
