@@ -519,7 +519,22 @@ def load_previous_search(request: gr.Request, search_id: str):
 
     print(f"[bold red]✗ Failed to load search {search_id}[/bold red]")
 
-    return "", [2007, datetime.now(tz=timezone.utc).year], [], [], [], 0.6
+    return (
+        "",  # query
+        [2007, datetime.now(tz=timezone.utc).year],  # year_range
+        [],  # document_type
+        [],  # modes
+        [],  # agencies
+        0.6,  # relevance
+        [],  # results
+        {},  # download_dict
+        "",  # message
+        None,  # document_type plot
+        None,  # mode plot
+        None,  # year plot
+        None,  # agency plot
+        None,  # event_type plot
+    )
 
 
 def delete_search(
