@@ -9,6 +9,8 @@ import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
+import pandas as pd
+import plotly.io
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.data.tables import TableClient
 from azure.storage.blob import BlobServiceClient
@@ -223,7 +225,7 @@ class KnowledgeSearchBlobStore(BaseBlobStore):
 
     def _get_blob_name(self, username: str, search_id: str) -> str:
         """Generate blob name for a knowledge search log."""
-        return f"searches/{username}/{search_id}.json"
+        return f"{username}/{search_id}.json"
 
     def store_search_blob(
         self,
@@ -248,7 +250,7 @@ class KnowledgeSearchBlobStore(BaseBlobStore):
         blob_name = self._get_blob_name(username, search_id)
         return self.store_blob(blob_name, search_data)
 
-    def retrieve_search_blob(self, username: str, search_id: str) -> dict | None:
+    def retrieve_search_blob(self, username: str, search_id: str) -> list[dict] | None:
         """
         Retrieve knowledge search data from blob storage.
 
@@ -260,11 +262,7 @@ class KnowledgeSearchBlobStore(BaseBlobStore):
             Search data dictionary or None if not found
         """
         blob_name = self._get_blob_name(username, search_id)
-        data = self.retrieve_blob(blob_name)
-        # Ensure we return the correct type - search data should be dicts
-        if isinstance(data, dict):
-            return data
-        return None
+        return self.retrieve_blob(blob_name)
 
     def delete_search_blob(self, username: str, search_id: str) -> bool:
         """
@@ -502,6 +500,10 @@ class KnowledgeSearchMetadataStore:
         search_settings: Searching.SearchParams,
         relevance: float,
         results_info: dict,
+        results: pd.DataFrame,
+        plots: dict,
+        download_dict: dict,
+        message: str,
         error_info: dict | None = None,
     ) -> bool:
         """
@@ -512,19 +514,31 @@ class KnowledgeSearchMetadataStore:
             search_id: Unique identifier for the search
             search_settings: Search parameters and settings
             results_info: Information about search results (count, relevance, etc.)
+            relevance: Relevance score for the search
+            results: DataFrame with detailed search results
             error_info: Error information if search failed
 
         Returns:
             True if successful, False otherwise
         """
-        # 1. Prepare comprehensive data for blob storage
+        # convert each plot to json serializable format
+        plots_serializable = {
+            key: plot.to_json() if plot is not None else None
+            for key, plot in plots.items()
+        }
+
+        download_dict_serializable = {
+            "settings": download_dict["settings"]._asdict(),
+            "results": download_dict["results"].to_dict(orient="records"),
+            "search_start_time": download_dict["search_start_time"].isoformat(),
+            "username": download_dict["username"],
+        }
+
         blob_data = {
-            "search_settings": search_settings._asdict(),
-            "results_info": results_info,
-            "error_info": error_info,
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-            "username": username,
-            "search_id": search_id,
+            "results": results.to_dict(orient="records"),
+            "plots": plots_serializable,
+            "download_dict": download_dict_serializable,
+            "message": message,
         }
 
         # Store detailed data in blob storage
@@ -544,6 +558,7 @@ class KnowledgeSearchMetadataStore:
             "RowKey": search_id,
             "query": search_settings.query[:100],  # Truncate for table storage
             "search_type": search_settings.search_type,
+            "year_range": str(search_settings.year_range),
             "document_types": str(search_settings.document_type),
             "modes": str(search_settings.modes),
             "agencies": str(search_settings.agencies),
@@ -635,24 +650,34 @@ class KnowledgeSearchMetadataStore:
         )
 
         # Get full detailed data from blob storage
-        detailed_data = self.blob_store.retrieve_search_blob(username, search_id)
-        if detailed_data is None:
+        results_dict = self.blob_store.retrieve_search_blob(username, search_id)
+
+        if results_dict is None:
             return None
+
+        results_df = pd.DataFrame.from_dict(results_dict["results"])
+        download_dict = results_dict["download_dict"]
+        download_dict["search_start_time"] = datetime.fromisoformat(
+            download_dict["search_start_time"],
+        )
+        download_dict["results"] = pd.DataFrame.from_dict(download_dict["results"])
+        download_dict["settings"] = Searching.SearchParams(**download_dict["settings"])
+
+        message = results_dict["message"]
+        plots = {
+            key: plotly.io.from_json(plot_dict) if plot_dict is not None else None
+            for key, plot_dict in results_dict["plots"].items()
+        }
+        print(f"Loaded {download_dict['settings']}")
 
         # Combine metadata and detailed data
         return {
             "search_id": search_id,
-            "metadata": {
-                "query": entity.get("query"),
-                "search_type": entity.get("search_type"),
-                "total_results": entity.get("total_results", 0),
-                "relevant_results": entity.get("relevant_results", 0),
-                "has_error": entity.get("has_error", False),
-                "error_message": entity.get("error_message"),
-                "search_timestamp": entity.get("search_timestamp"),
-                "created_at": entity.get("created_at"),
-            },
-            "detailed_data": detailed_data,
+            "results": results_df,
+            "plots": plots,
+            "download_dict": download_dict,
+            "message": message,
+            **entity,
         }
 
     def delete_search_log(self, username: str, search_id: str) -> bool:
