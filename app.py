@@ -342,7 +342,7 @@ def load_conversation(request: gr.Request, conversation_id: str):
                 f"[orange]⚠ Version warning for conversation {conversation_id}: {version_message}[/orange]",
             )
             # Add a subtle warning to the title but still load the conversation
-            formatted_title = f"{conversation['conversation_title']} ⚠️"
+            formatted_title = f"{conversation['conversation_title']}"
         else:
             formatted_title = conversation["conversation_title"]
 
