@@ -1219,7 +1219,12 @@ with gr.Blocks(
                                     )
 
                 with gr.Column(scale=2):
-                    query = gr.Textbox(label="Search Query", submit_btn="Search")
+                    query = gr.Textbox(
+                        label="Search Query",
+                        submit_btn="Search",
+                        placeholder="Enter your search query here...",
+                        info='Use quotes for exact match searches, e.g., "engine failure"',
+                    )
                     with gr.Row():
                         with gr.Column():
                             search_summary = gr.Markdown()
