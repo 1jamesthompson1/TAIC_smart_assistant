@@ -1,6 +1,9 @@
+import datetime
 import os
 import uuid
 
+import pandas as pd
+import plotly.express as px
 import pytest
 
 from app import conversation_store, knowledge_search_store
@@ -55,21 +58,54 @@ def test_knowledge_search_logging():
     searches = knowledge_search_store.get_user_search_history("testuser")
     pre_number = len(searches)
 
+    fake_plotly_figure = px.bar(x=[1, 2, 3], y=[4, 5, 6])
+    figures = {
+        "document_type": fake_plotly_figure,
+        "mode": fake_plotly_figure,
+        "agency": fake_plotly_figure,
+        "year": fake_plotly_figure,
+        "event_type": fake_plotly_figure,
+    }
+    search_settings = SearchParams(
+        query="test query",
+        search_type="fts",
+        year_range=(2010, 2024),
+        document_type=["safety_issue"],
+        modes=["0", "1"],
+        agencies=["TAIC"],
+    )
+
+    fake_results = pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "title": ["Doc 1", "Doc 2", "Doc 3"],
+            "content": [
+                "Content of document 1",
+                "Content of document 2",
+                "Content of document 3",
+            ],
+        },
+    )
+
+    fake_download_dict = {
+        "settings": search_settings,
+        "search_start_time": datetime.datetime.now(),  # noqa: DTZ005
+        "results": fake_results,
+        "username": "testuser",
+    }
+
     search_id = str(uuid.uuid4())
     expected_results = 3
     knowledge_search_store.store_search_log(
         username="testuser",
         search_id=search_id,
-        search_settings=SearchParams(
-            query="test query",
-            search_type="fts",
-            year_range=(2010, 2024),
-            document_type=["safety_issue"],
-            modes=["0", "1"],
-            agencies=["TAIC"],
-        ),
+        search_settings=search_settings,
         relevance=0.5,
         results_info={"total_results": expected_results},
+        results=fake_results,
+        message="Test search message",
+        download_dict=fake_download_dict,
+        plots=figures,
         error_info=None,
     )
 
@@ -80,7 +116,8 @@ def test_knowledge_search_logging():
     # Find our search
     our_search = knowledge_search_store.load_detailed_search("testuser", search_id)
     assert our_search is not None
-    assert our_search["metadata"]["total_results"] == expected_results
+    assert our_search["total_results"] == expected_results
+    assert our_search["plots"].keys() == figures.keys()
 
     # Clean up by deleting the search log
     deleted = knowledge_search_store.delete_search_log("testuser", search_id)
