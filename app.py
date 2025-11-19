@@ -1238,7 +1238,6 @@ with gr.Blocks(
                         label="Search Query",
                         submit_btn="Search",
                         placeholder="Enter your search query here...",
-                        info='Use quotes for exact match searches, e.g., "engine failure"',
                     )
                     with gr.Row():
                         with gr.Column():
