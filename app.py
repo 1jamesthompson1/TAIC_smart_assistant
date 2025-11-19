@@ -522,6 +522,34 @@ def load_previous_search(request: gr.Request, search_id: str):
     return "", [2007, datetime.now(tz=timezone.utc).year], [], [], [], 0.6
 
 
+def delete_search(
+    request: gr.Request,
+    search_id_to_delete: gr.State,
+):
+    """
+    Delete a search.
+    Will ask the user for confirmation before calling this function.
+    """
+    username = request.username
+
+    if search_id_to_delete is None:
+        print("[orange]Deletion of search cancelled by user[/orange]")
+        return
+
+    success = knowledge_search_store.delete_search_log(
+        username,
+        search_id_to_delete,
+    )
+
+    if success:
+        print(f"[bold green]✓ Deleted search {search_id_to_delete}[/bold green]")
+    else:
+        print(f"[bold red]✗ Failed to delete search {search_id_to_delete}[/bold red]")
+        gr.Warning("Failed to delete search. Try again later.")
+
+    return
+
+
 def create_complete_search_params(
     query: str,
     year_range: list,
@@ -1092,6 +1120,7 @@ with gr.Blocks(
             )
 
             with gr.Row():
+                search_id_to_delete = gr.JSON(None, visible="hidden")
                 search_results = gr.Dataframe(
                     max_chars=1500,
                     max_height=10000,
@@ -1117,10 +1146,20 @@ with gr.Blocks(
                 with gr.Column(scale=1):
                     gr.Markdown("## Previous searches")
 
+                    search_id_to_delete.change(
+                        delete_search,
+                        inputs=search_id_to_delete,
+                        outputs=None,
+                    ).then(
+                        get_user_search_history,
+                        inputs=None,
+                        outputs=user_search_history,
+                    )
+
                     @gr.render(inputs=[user_search_history])
                     def render_search_history(search_history):
                         for search in search_history:
-                            with gr.Row():
+                            with gr.Group(), gr.Row():
                                 query_text = search.get("query", "No query")
                                 max_query_display_length = 30
                                 if len(query_text) > max_query_display_length:
@@ -1135,25 +1174,49 @@ with gr.Blocks(
                                     container=False,
                                 )
 
-                                def create_load_search_function(search_id):
-                                    def load_func(request: gr.Request):
-                                        return load_previous_search(request, search_id)
+                                with gr.Column(min_width=40):
 
-                                    return load_func
+                                    def create_load_search_function(search_id):
+                                        def load_func(request: gr.Request):
+                                            return load_previous_search(
+                                                request,
+                                                search_id,
+                                            )
 
-                                gr.Button("load").click(
-                                    fn=create_load_search_function(search["search_id"]),
-                                    inputs=None,
-                                    outputs=[
-                                        query,
-                                        year_range,
-                                        document_type,
-                                        modes,
-                                        agencies,
-                                        relevance,
-                                        *search_outputs,
-                                    ],
-                                )
+                                        return load_func
+
+                                    gr.Button("load", size="sm").click(
+                                        fn=create_load_search_function(
+                                            search["search_id"],
+                                        ),
+                                        inputs=None,
+                                        outputs=[
+                                            query,
+                                            year_range,
+                                            document_type,
+                                            modes,
+                                            agencies,
+                                            relevance,
+                                            *search_outputs,
+                                        ],
+                                    )
+
+                                    js = f"""
+                                    () => {{
+                                        return confirm(`Are you sure you want to delete\n\n{query_text}\n\nThis action cannot be undone.`)
+                                            ? '{search["search_id"]}'
+                                            : null;
+                                    }}
+                                    """
+                                    gr.Button(
+                                        "delete",
+                                        size="sm",
+                                    ).click(
+                                        None,
+                                        None,
+                                        search_id_to_delete,
+                                        js=js,
+                                    )
 
                 with gr.Column(scale=2):
                     query = gr.Textbox(label="Search Query", submit_btn="Search")
