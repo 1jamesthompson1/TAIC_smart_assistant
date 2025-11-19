@@ -475,8 +475,8 @@ def load_previous_search(request: gr.Request, search_id: str):
         document_type_reverse_mapping = {
             "safety_issue": "Safety issues",
             "recommendation": "Safety recommendations",
-            "report_section": "Report sections",
-            "report_text": "Report summaries",
+            "section": "Report sections",
+            "summary": "Report summaries",
         }
         mapped_document_types = search_settings.get("document_type", [])
         if isinstance(mapped_document_types, list):
@@ -529,7 +529,7 @@ def create_complete_search_params(
     document_type_mapping = {
         "Safety issues": "safety_issue",
         "Safety recommendations": "recommendation",
-        "Report sections": "report_section",
+        "Report sections": "section",
         "Report summaries": "summary",
     }
 
