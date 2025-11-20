@@ -4,7 +4,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Continuous Integration](https://github.com/1jamesthompson1/TAIC_smart_assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/1jamesthompson1/TAIC_smart_assistant/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/Version-0.6.0-blue)
+![Version](https://img.shields.io/badge/Version-0.6.1-blue)
 
 ## Preview
 
