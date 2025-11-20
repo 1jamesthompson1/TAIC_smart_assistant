@@ -4,7 +4,7 @@
 
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 [![Continuous Integration](https://github.com/1jamesthompson1/TAIC_smart_assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/1jamesthompson1/TAIC_smart_assistant/actions/workflows/ci.yml)
----
+![Version](https://img.shields.io/badge/Version-0.6.0-blue)
 
 ## Preview
 
